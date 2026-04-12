@@ -1112,7 +1112,7 @@ export default function Dashboard() {
         </div>
       </div>
       {renderInteractiveSelector()}
-      <div className="stats-grid" style={{ animationDelay: '0.1s', position: 'relative', zIndex: 1 }}>
+      <div className="stats-grid" style={{ animationDelay: '0.1s', position: 'relative', zIndex: 50 }}>
         <div className="stat-card glass-panel">
           <div className="stat-header">
             <span className="stat-title">Saldo no Período</span>
