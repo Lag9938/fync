@@ -1926,22 +1926,6 @@ export default function Dashboard() {
       setIsQuotesLoading(false);
     }
   };
-  const handleBulkDelete = () => {
-    if (selectedIds.length === 0) return;
-    askConfirmation(
-      'Excluir Lançamentos',
-      `⚠️ Deseja excluir permanentemente os ${selectedIds.length} lançamentos selecionados?`,
-      async () => {
-        const res = await deleteTransactions(selectedIds);
-        if (res.success) {
-          showToast(`✅ ${selectedIds.length} lançamentos excluídos.`);
-          setSelectedIds([]);
-        } else {
-          showToast(`Erro: ${res.message}`, 'error');
-        }
-      }
-    );
-  };
 
   const handleBulkCategoryUpdate = async (newCat) => {
     if (selectedIds.length === 0) return;
