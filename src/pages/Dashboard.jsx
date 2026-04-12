@@ -48,7 +48,9 @@ import {
   Target,
   CheckCircle2,
   Clock,
-  RefreshCw
+  RefreshCw,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -115,6 +117,11 @@ export default function Dashboard() {
   // Stock Quotes State
   const [stockQuotes, setStockQuotes] = useState({}); // { "PETR4": 35.50 }
   const [isQuotesLoading, setIsQuotesLoading] = useState(false);
+
+  // Fullscreen & Immersive Mode
+  const [isTxFullscreen, setIsTxFullscreen] = useState(false);
+  const [isBulkCategoryModalOpen, setIsBulkCategoryModalOpen] = useState(false);
+  const [bulkCategoryTarget, setBulkCategoryTarget] = useState('');
 
   // OFX Import state
   const [ofxPreview, setOfxPreview] = useState(null); // { transactions: [...] } or null
@@ -1534,13 +1541,13 @@ export default function Dashboard() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.4rem', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                       <span>Gasto: <strong style={{ color: 'var(--text-main)' }}>{formatCurrency(usedRaw)}</strong></span>
                       <span style={{ color: isOver ? 'var(--danger-color)' : isWarning ? '#f59e0b' : 'var(--success-color)', fontWeight: 600 }}>
-                        {isOver ? `⚠ Estourado (+${formatCurrency(usedRaw - limit)})` : `${(100 - progress).toFixed(0)}% livre`}
+                        {progress.toFixed(0)}%
                       </span>
                     </div>
                   </div>
                 ) : (
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    Sem limite definido para este mês
+                  <div style={{ paddingLeft: isOver ? '8px' : '0', color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
+                    Meta não definida
                   </div>
                 )}
               </div>
@@ -1548,360 +1555,188 @@ export default function Dashboard() {
           })}
         </div>
       </div>
+    </div>
+  );
 
-
-      <div className="stats-grid" style={{ marginBottom: '2rem' }}>
-        <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-            <h2 className="chart-title" style={{ margin: 0 }}>Proporção Receitas x Despesas</h2>
-            
-            {availableCategoriesForPie.length > 0 && (
-              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '300px' }}>
-                <span style={{ width: '100%', fontSize: '0.7rem', color: 'var(--text-muted)', textAlign: 'right', marginBottom: '0.2rem' }}>Filtrar itens na pizza:</span>
-                {availableCategoriesForPie.map(catId => {
-                  const isExcluded = excludedCategories.includes(catId);
-                  return (
-                    <button
-                      key={catId}
-                      onClick={() => {
-                        setExcludedCategories(prev => 
-                          isExcluded ? prev.filter(c => c !== catId) : [...prev, catId]
-                        );
-                      }}
-                      style={{
-                        padding: '0.2rem 0.6rem',
-                        fontSize: '0.65rem',
-                        borderRadius: 'var(--radius-full)',
-                        border: isExcluded ? '1px solid rgba(255,255,255,0.05)' : '1px solid var(--primary-color)',
-                        background: isExcluded ? 'transparent' : 'rgba(99, 102, 241, 0.1)',
-                        color: isExcluded ? 'var(--text-muted)' : 'var(--primary-color)',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        opacity: isExcluded ? 0.5 : 1
-                      }}
-                    >
-                      {catId}
-                    </button>
-                  );
-                })}
+  const renderGeneralView = () => (
+    <div className={`animate-fade-in ${isTxFullscreen ? 'tx-fullscreen-view' : ''}`}>
+      {!isTxFullscreen && (
+        <>
+          <div className="stats-grid">
+            <div className="stat-card">
+              <div className="stat-label">Saldo Atual</div>
+              <div className="stat-value">{formatCurrency(totals.balance)}</div>
+              <div className="stat-footer flex items-center gap-1">
+                <Shield size={14} className="text-success" /> Conta Protegida
               </div>
-            )}
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Receitas (Mês)</div>
+              <div className="stat-value text-success">+{formatCurrency(totals.income)}</div>
+              <div className="stat-footer">
+                <ArrowUpRight size={14} className="text-success" /> Planejamento OK
+              </div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Despesas (Mês)</div>
+              <div className="stat-value text-danger">-{formatCurrency(totals.expense)}</div>
+              <div className="stat-footer">
+                <ArrowDownRight size={14} className="text-danger" /> {totals.expense > totals.income ? 'Atenção ao limite' : 'Dentro da meta'}
+              </div>
+            </div>
           </div>
 
-          <div style={{ width: '100%', height: 320 }}>
-            {pieData[0].value === 0 && pieData[1].value === 0 ? (
-               <div className="flex h-full items-center justify-center flex-col text-muted" style={{ fontSize: '0.9rem', textAlign: 'center' }}>
-                 <div style={{ background: 'rgba(255,255,255,0.02)', padding: '2rem', borderRadius: '50%', marginBottom: '1rem', border: '1px dashed var(--border-color)' }}>
-                   <PieChart size={40} opacity={0.2} />
-                 </div>
-                 Sem dados para os filtros selecionados.<br/>
-                 <small style={{ opacity: 0.6 }}>Tente reativar as categorias acima.</small>
-               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <RechartsPieChart margin={{ top: 10, right: 60, left: 60, bottom: 10 }}>
-                  <Pie
-                    data={pieData}
-                    cx="50%" cy="50%"
-                    innerRadius={65}
-                    outerRadius={95}
-                    paddingAngle={5}
-                    dataKey="value"
-                    labelLine={true}
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  >
-                    <Cell key="cell-0" fill="#10b981" />
-                    <Cell key="cell-1" fill="#ef4444" />
-                  </Pie>
-                  <RechartsTooltip 
-                    formatter={(value) => formatCurrency(value)}
-                    contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37', color: '#f8fafc', borderRadius: '8px' }} 
-                  />
-                </RechartsPieChart>
-              </ResponsiveContainer>
-            )}
+            <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
+              <h2 className="chart-title">Proporção Receitas x Despesas</h2>
+              <div style={{ width: '100%', height: 320 }}>
+                {pieData[0].value === 0 && pieData[1].value === 0 ? (
+                  <div className="flex h-full items-center justify-center text-muted">Sem dados no período.</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RechartsPieChart>
+                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={65} outerRadius={95} paddingAngle={5} dataKey="value">
+                        <Cell key="cell-0" fill="#10b981" />
+                        <Cell key="cell-1" fill="#ef4444" />
+                      </Pie>
+                      <RechartsTooltip formatter={(v) => formatCurrency(v)} contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37' }} />
+                    </RechartsPieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
-          <h2 className="chart-title mb-4">Despesas por Categoria</h2>
-          {dynamicCategoryData.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-muted">Sem despesas registradas.</div>
-          ) : (
-            <div style={{ width: '100%', height: 300 }}>
+          <div className="stats-grid" style={{ marginBottom: '2rem' }}>
+            <div className="glass-panel" style={{ padding: '2rem', height: '400px', borderRadius: 'var(--radius-xl)' }}>
+              <h2 className="chart-title mb-8">Fluxo de Caixa Mensal</h2>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dynamicCategoryData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#272a37" horizontal={false} />
-                  <XAxis stroke="#94a3b8" type="number" tickFormatter={(v) => `R$${v}`} />
-                  <YAxis dataKey="name" stroke="#94a3b8" type="category" width={80} />
-                  <RechartsTooltip cursor={{ fill: '#1e202d' }} contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37' }} />
-                  <Bar dataKey="value" name="Valor Gasto" fill="var(--primary-color)" radius={[0, 4, 4, 0]}>
-                    {dynamicCategoryData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient>
+                    <linearGradient id="colorPv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0}/></linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#272a37" vertical={false} />
+                  <XAxis dataKey="name" stroke="#94a3b8" />
+                  <YAxis stroke="#94a3b8" tickFormatter={(v) => `R$${v}`} />
+                  <RechartsTooltip contentStyle={{ backgroundColor: '#171923', border: 'none' }} />
+                  <Area type="monotone" dataKey="Receitas" stroke="#10b981" fillOpacity={1} fill="url(#colorUv)" />
+                  <Area type="monotone" dataKey="Despesas" stroke="#ef4444" fillOpacity={1} fill="url(#colorPv)" />
+                </AreaChart>
               </ResponsiveContainer>
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
 
-      <div className="stats-grid" style={{ marginBottom: '2rem' }}>
-        <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
-          <h2 className="chart-title mb-4">Aportes por Classe (Investimentos)</h2>
-          {investmentAportesData.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-muted">Sem aportes no período.</div>
-          ) : (
-            <div style={{ width: '100%', height: 300 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <RechartsPieChart>
-                  <Pie
-                    data={investmentAportesData}
-                    cx="50%" cy="50%"
-                    innerRadius={50}
-                    outerRadius={90}
-                    paddingAngle={5}
-                    dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {investmentAportesData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37', color: '#f8fafc' }} />
-                </RechartsPieChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-
-        <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
-          <h2 className="chart-title mb-4">Proventos Recebidos (Por Ativo)</h2>
-          {investmentDividendosData.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-muted">Sem dividendos no período.</div>
-          ) : (
-            <div style={{ width: '100%', height: 300 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={investmentDividendosData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#272a37" horizontal={false} />
-                  <XAxis stroke="#94a3b8" type="number" tickFormatter={(v) => `R$${v}`} />
-                  <YAxis dataKey="name" stroke="#94a3b8" type="category" width={80} />
-                  <RechartsTooltip cursor={{ fill: '#1e202d' }} contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37' }} />
-                  <Bar dataKey="value" name="Dividendos" fill="var(--success-color)" radius={[0, 4, 4, 0]}>
-                    {investmentDividendosData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={PIE_COLORS[(index + 3) % PIE_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="glass-panel" style={{ padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}>
-        <h2 className="chart-title mb-4" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      {/* Optimized Transaction List with Fullscreen support */}
+      <div 
+        className={`glass-panel ${isTxFullscreen ? 'immersive-tx-view' : ''}`} 
+        style={isTxFullscreen ? { 
+          position: 'fixed', top: '2rem', left: '6.5rem', right: '2rem', bottom: '2rem', 
+          zIndex: 1000, display: 'flex', flexDirection: 'column', padding: '2rem', boxShadow: '0 0 50px rgba(0,0,0,0.5)', borderRadius: 'var(--radius-xl)'
+        } : { padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <span>Histórico Completo de Lançamentos</span>
-            
-            <button 
-              className={`btn ${isSelectionMode ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={toggleSelectionMode}
-              style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}
-            >
-              <Shield size={14} style={{ marginRight: '0.5rem' }} />
-              {isSelectionMode ? 'Sair da Seleção' : 'Selecionar Lançamentos'}
-            </button>
-
+            <h2 className="chart-title" style={{ margin: 0 }}>Histórico de Lançamentos ({filteredTransactions.length})</h2>
             {selectedIds.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span className="badge" style={{ backgroundColor: 'var(--primary-color)', color: 'white', padding: '4px 12px', borderRadius: '20px', fontSize: '0.8rem' }}>
+                {selectedIds.length} selecionados
+              </span>
+            )}
+          </div>
+          
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {selectedIds.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.4rem', marginRight: '1rem' }}>
                 <select 
-                  className="input-field"
+                  className="input-field" 
+                  style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
                   onChange={(e) => handleBulkUpdateCategory(e.target.value)}
                   defaultValue=""
-                  style={{ 
-                    padding: '0.4rem 0.8rem', 
-                    fontSize: '0.8rem', 
-                    width: 'auto',
-                    background: 'rgba(99, 102, 241, 0.1)',
-                    border: '1px solid rgba(99, 102, 241, 0.3)',
-                    color: 'var(--primary-color)',
-                    cursor: 'pointer'
-                  }}
                 >
-                  <option value="" disabled>📁 Categorizar selecionados...</option>
-                  {CATEGORIES.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.id}</option>
-                  ))}
+                  <option value="" disabled>📁 Trocar Categoria...</option>
+                  {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
                 </select>
-
-                <button 
-                  className="btn btn-secondary animate-fade-in" 
-                  onClick={handleBulkDelete}
-                  disabled={loading}
-                  style={{ 
-                    background: 'rgba(239, 68, 68, 0.1)', 
-                    color: 'var(--danger-color)', 
-                    borderColor: 'rgba(239, 68, 68, 0.3)', 
-                    padding: '0.4rem 0.8rem', 
-                    fontSize: '0.8rem',
-                    opacity: loading ? 0.7 : 1,
-                    cursor: loading ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  <Trash2 size={14} style={{ marginRight: '0.5rem' }} />
-                  {loading ? 'Excluindo...' : `Excluir ${selectedIds.length}`}
+                <button className="btn-icon text-danger" onClick={handleBulkDelete} title="Excluir Selecionados">
+                  <Trash2 size={20} />
                 </button>
               </div>
             )}
+
+            <button 
+              className="btn-icon" 
+              onClick={() => {
+                const allIds = filteredTransactions.map(t => t.id);
+                if (selectedIds.length === allIds.length) setSelectedIds([]);
+                else setSelectedIds(allIds);
+              }}
+              title="Selecionar Tudo"
+              style={{ color: selectedIds.length > 0 && selectedIds.length === filteredTransactions.length ? 'var(--primary-color)' : 'inherit' }}
+            >
+              <CheckCircle2 size={22} />
+            </button>
+
+            <button className="btn-icon" onClick={() => setIsTxFullscreen(!isTxFullscreen)} title="Alternar Tela Cheia">
+              {isTxFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
+            </button>
           </div>
-          <span className="text-muted text-sm">{transactions.length} Registros</span>
-        </h2>
-        <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+        </div>
+
+        <div style={{ overflowY: 'auto', flex: 1, maxHeight: isTxFullscreen ? 'none' : '450px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                {isSelectionMode && (
-                  <th style={{ padding: '1rem', width: '140px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem' }}>
-                      <input 
-                        type="checkbox" 
-                        checked={selectedIds.length > 0 && selectedIds.length === transactions.length}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          handleSelectAll(transactions);
-                        }}
-                      />
-                      Selecionar todos
-                    </label>
-                  </th>
-                )}
-                <th style={{ padding: '1rem', fontWeight: 600 }}>Data</th>
-                <th style={{ padding: '1rem', fontWeight: 600 }}>Título</th>
-                <th style={{ padding: '1rem', fontWeight: 600 }}>Conta/Cartão</th>
-                <th style={{ padding: '1rem', fontWeight: 600 }}>Categoria</th>
-                <th style={{ padding: '1rem', fontWeight: 600 }}>Tipo</th>
-                <th style={{ padding: '1rem', fontWeight: 600 }}>Valor</th>
-                {!isSelectionMode && <th style={{ padding: '1rem', fontWeight: 600, textAlign: 'right' }}>Ações</th>}
+              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                <th style={{ padding: '1rem', width: '40px' }}></th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>Data</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>Descrição</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>Conta</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>Categoria</th>
+                <th style={{ padding: '1rem', textAlign: 'right' }}>Valor</th>
+                <th style={{ padding: '1rem', textAlign: 'right' }}>Ações</th>
               </tr>
             </thead>
             <tbody>
-              {(() => {
-                try {
-                  return memoizedSortedTransactions.map(t => {
-                    const wName = wallets.find(w => w.id === t.walletId)?.name || 'Sem Carteira';
-                    const isSelected = selectedIds.includes(t.id);
-                    return (
-                      <tr 
-                        key={t.id} 
-                        onClick={(e) => {
-                          try {
-                            if (isSelectionMode) {
-                              handleToggleSelect(t.id);
-                            } else {
-                              setSelectedTransactionDetail(t);
-                              setIsDetailModalOpen(true);
-                            }
-                          } catch (err) {
-                            console.error('Row click error:', err);
-                          }
-                        }}
-                        style={{ 
-                          borderBottom: '1px solid var(--border-color)', 
-                          background: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
-                          transition: 'background 0.2s',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        {isSelectionMode && (
-                          <td style={{ padding: '1rem' }}>
-                            <input 
-                              type="checkbox" 
-                              checked={isSelected}
-                              onChange={(e) => {
-                                e.stopPropagation();
-                                handleToggleSelect(t.id);
-                              }}
-                              onClick={(e) => e.stopPropagation()}
-                              style={{ cursor: 'pointer' }}
-                            />
-                          </td>
-                        )}
-                        <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>
-                          {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Sem Data'}
-                        </td>
-                        <td style={{ padding: '1rem' }}>
-                          <div style={{ fontWeight: 500 }}>{t.title}</div>
-                          {t.ticker && <span className="text-xs text-primary">{t.ticker}</span>}
-                        </td>
-                        <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{wName}</td>
-                        <td style={{ padding: '1rem' }}>
-                          <select 
-                            value={t.category}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              updateTransaction(t.id, { ...t, category: e.target.value });
-                              showToast(`✅ Categoria de "${t.title}" alterada para "${e.target.value}".`);
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ 
-                              background: 'transparent',
-                              border: 'none',
-                              color: 'var(--text-muted)',
-                              fontSize: '0.875rem',
-                              padding: '0.2rem',
-                              cursor: 'pointer',
-                              outline: 'none',
-                              borderRadius: '4px',
-                              width: '100%'
-                            }}
-                            onMouseEnter={(e) => e.target.style.background = 'rgba(255,255,255,0.05)'}
-                            onMouseLeave={(e) => e.target.style.background = 'transparent'}
-                          >
-                            {CATEGORIES.map(cat => (
-                              <option key={cat.id} value={cat.id}>{cat.id}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={{ padding: '1rem' }}>
-                          <span style={{ 
-                            padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)', 
-                            background: t.type === 'income' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-                            color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)',
-                            fontSize: '0.8rem', fontWeight: 'bold'
-                          }}>
-                            {t.type === 'income' ? 'Receita' : 'Despesa'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '1rem', color: t.type==='income'?'var(--success-color)':'var(--danger-color)', fontWeight:'bold' }}>
-                          {formatCurrency(t.amount)}
-                        </td>
-                        {!isSelectionMode && (
-                          <td style={{ padding: '1rem', textAlign: 'right' }}>
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openEditTransaction(t); }} title="Editar">
-                                <Edit2 size={16} />
-                              </button>
-                              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); deleteTransaction(t.id); }} title="Excluir">
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  });
-                } catch (err) {
-                  console.error('Render table error:', err);
-                  return null;
-                }
-              })()}
-              {transactions.length === 0 && (
-                <tr>
-                  <td colSpan="7" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Nenhuma transação salva no sistema.</td>
+              {(isTxFullscreen ? filteredTransactions : filteredTransactions.slice(0, 50)).map(t => (
+                <tr 
+                  key={t.id} 
+                  style={{ 
+                    borderBottom: '1px solid var(--border-color)', 
+                    background: selectedIds.includes(t.id) ? 'rgba(99, 102, 241, 0.05)' : 'transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <td style={{ padding: '1rem' }}>
+                    <input 
+                      type="checkbox" 
+                      style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
+                      checked={selectedIds.includes(t.id)} 
+                      onChange={() => setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id])} 
+                    />
+                  </td>
+                  <td style={{ padding: '1rem', whiteSpace: 'nowrap', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                    {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Sem Data'}
+                  </td>
+                  <td style={{ padding: '1rem' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{t.title}</div>
+                  </td>
+                  <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    {wallets.find(w => w.id === t.walletId)?.name || 'N/A'}
+                  </td>
+                  <td style={{ padding: '1rem' }}>
+                    <span className="category-tag">{t.category}</span>
+                  </td>
+                  <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 700, color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                    {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
+                  </td>
+                  <td style={{ padding: '1rem', textAlign: 'right' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                      <button className="btn-icon" onClick={() => openEditTransaction(t)}><Edit2 size={16} /></button>
+                      <button className="btn-icon" onClick={() => deleteTransaction(t.id)}><Trash2 size={16} /></button>
+                    </div>
+                  </td>
                 </tr>
-              )}
+              ))}
             </tbody>
           </table>
         </div>
@@ -2052,31 +1887,77 @@ export default function Dashboard() {
   };
 
   const fetchStockQuotes = async (tickers) => {
-    if (!tickers || tickers.length === 0) return;
+    if (!tickers || tickers.length === 0) {
+      showToast('Nenhum ativo para atualizar.', 'info');
+      return;
+    }
     setIsQuotesLoading(true);
     try {
-      const tickerList = tickers.join(',');
-      // Usando a Brapi (versão free tem limites, mas funciona para os principais ativos)
-      const response = await fetch(`https://brapi.dev/api/quote/${tickerList}`);
+      // Filtrar apenas o ticker base (remover sufixos se houver)
+      const cleanTickers = tickers.map(t => String(t).split('-')[0].trim()).join(',');
+      
+      // Brapi version: Se falhar em massa, tentamos individualmente ou via proxy
+      const response = await fetch(`https://brapi.dev/api/quote/${cleanTickers}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const data = await response.json();
       
-      if (data && data.results) {
+      if (data && data.results && data.results.length > 0) {
         const newQuotes = {};
         data.results.forEach(res => {
-          if (res.symbol && res.regularMarketPrice) {
-            newQuotes[res.symbol] = res.regularMarketPrice;
+          if (res.symbol && (res.regularMarketPrice || res.price)) {
+            newQuotes[res.symbol] = res.regularMarketPrice || res.price;
           }
         });
-        setStockQuotes(prev => ({ ...prev, ...newQuotes }));
-        showToast(`Cota\u00e7\u00f5es atualizadas: ${Object.keys(newQuotes).length} ativos.`);
+        
+        if (Object.keys(newQuotes).length === 0) {
+          showToast('Cotações não encontradas (API limitada).', 'warning');
+        } else {
+          setStockQuotes(prev => ({ ...prev, ...newQuotes }));
+          showToast(`✅ ${Object.keys(newQuotes).length} ativos atualizados.`);
+        }
+      } else {
+        showToast('Nenhum dado retornado pela API.', 'warning');
       }
     } catch (err) {
-      console.error('Erro ao buscar cota\u00e7\u00f5es:', err);
-      showToast('Erro ao atualizar cota\u00e7\u00f5es. Verifique sua conex\u00e3o.', 'error');
+      console.error('Erro ao buscar cotações:', err);
+      showToast('Erro na API de cotações. Tente novamente mais tarde.', 'error');
     } finally {
       setIsQuotesLoading(false);
     }
   };
+  const handleBulkDelete = () => {
+    if (selectedIds.length === 0) return;
+    askConfirmation(
+      'Excluir Lançamentos',
+      `⚠️ Deseja excluir permanentemente os ${selectedIds.length} lançamentos selecionados?`,
+      async () => {
+        const res = await deleteTransactions(selectedIds);
+        if (res.success) {
+          showToast(`✅ ${selectedIds.length} lançamentos excluídos.`);
+          setSelectedIds([]);
+        } else {
+          showToast(`Erro: ${res.message}`, 'error');
+        }
+      }
+    );
+  };
+
+  const handleBulkCategoryUpdate = async (newCat) => {
+    if (selectedIds.length === 0) return;
+    const res = await bulkUpdateCategory(selectedIds, newCat);
+    if (res.success) {
+      showToast(`✅ Categoria de ${selectedIds.length} lançamentos atualizada.`);
+      setSelectedIds([]);
+      setIsBulkCategoryModalOpen(false);
+    } else {
+      showToast(`Erro: ${res.message}`, 'error');
+    }
+  };
+
   // -------------------------
 
   const renderInvestments = () => {
