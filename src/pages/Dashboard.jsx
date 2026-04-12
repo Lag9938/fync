@@ -303,8 +303,17 @@ export default function Dashboard() {
         const endObj = filterEndDate ? new Date(filterEndDate + 'T23:59:59') : new Date('2100-01-01T23:59:59');
         return tDate >= startObj && tDate <= endObj;
       }
-    }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    });
   }, [transactions, filterMonth, filterMode, filterStartDate, filterEndDate]);
+
+  const memoizedSortedTransactions = useMemo(() => {
+    try {
+      return [...filteredTransactions].sort((a,b) => new Date(b.date || 0) - new Date(a.date || 0));
+    } catch (err) {
+      console.error('Error sorting transactions:', err);
+      return [];
+    }
+  }, [filteredTransactions]);
 
   const filteredTotals = useMemo(() => {
     return filteredTransactions.reduce((acc, curr) => {
@@ -1205,7 +1214,10 @@ export default function Dashboard() {
                       <input 
                         type="checkbox" 
                         checked={selectedIds.length > 0 && selectedIds.length === transactions.length}
-                        onChange={() => handleSelectAll(transactions)}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          handleSelectAll(transactions);
+                        }}
                       />
                       Selecionar todos
                     </label>
@@ -1221,99 +1233,116 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {transactions.slice().sort((a,b) => new Date(b.date) - new Date(a.date)).map(t => {
-                const wName = wallets.find(w => w.id === t.walletId)?.name || 'Sem Carteira';
-                const isSelected = selectedIds.includes(t.id);
-                return (
-                  <tr 
-                    key={t.id} 
-                    onClick={() => {
-                      if (isSelectionMode) {
-                        handleToggleSelect(t.id);
-                      } else {
-                        setSelectedTransactionDetail(t);
-                        setIsDetailModalOpen(true);
-                      }
-                    }}
-                    style={{ 
-                      borderBottom: '1px solid var(--border-color)', 
-                      background: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
-                      transition: 'background 0.2s',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {isSelectionMode && (
-                      <td style={{ padding: '1rem' }}>
-                        <input 
-                          type="checkbox" 
-                          checked={isSelected}
-                          readOnly
-                          style={{ cursor: 'pointer' }}
-                        />
-                      </td>
-                    )}
-                    <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>{new Date(t.date).toLocaleDateString('pt-BR')}</td>
-                    <td style={{ padding: '1rem' }}>
-                      <div style={{ fontWeight: 500 }}>{t.title}</div>
-                      {t.ticker && <span className="text-xs text-primary">{t.ticker}</span>}
-                    </td>
-                    <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{wName}</td>
-                    <td style={{ padding: '1rem' }}>
-                      <select 
-                        value={t.category}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          updateTransaction(t.id, { ...t, category: e.target.value });
-                          showToast(`✅ Categoria de "${t.title}" alterada para "${e.target.value}".`);
+              {(() => {
+                try {
+                  return memoizedSortedTransactions.map(t => {
+                    const wName = wallets.find(w => w.id === t.walletId)?.name || 'Sem Carteira';
+                    const isSelected = selectedIds.includes(t.id);
+                    return (
+                      <tr 
+                        key={t.id} 
+                        onClick={(e) => {
+                          try {
+                            if (isSelectionMode) {
+                              handleToggleSelect(t.id);
+                            } else {
+                              setSelectedTransactionDetail(t);
+                              setIsDetailModalOpen(true);
+                            }
+                          } catch (err) {
+                            console.error('Row click error:', err);
+                          }
                         }}
-                        onClick={(e) => e.stopPropagation()}
                         style={{ 
-                          background: 'transparent',
-                          border: 'none',
-                          color: 'var(--text-muted)',
-                          fontSize: '0.875rem',
-                          padding: '0.2rem',
-                          cursor: 'pointer',
-                          outline: 'none',
-                          borderRadius: '4px',
-                          width: '100%'
+                          borderBottom: '1px solid var(--border-color)', 
+                          background: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
+                          transition: 'background 0.2s',
+                          cursor: 'pointer'
                         }}
-                        onMouseEnter={(e) => e.target.style.background = 'rgba(255,255,255,0.05)'}
-                        onMouseLeave={(e) => e.target.style.background = 'transparent'}
                       >
-                        {CATEGORIES.map(cat => (
-                          <option key={cat.id} value={cat.id}>{cat.id}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td style={{ padding: '1rem' }}>
-                      <span style={{ 
-                        padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)', 
-                        background: t.type === 'income' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-                        color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)',
-                        fontSize: '0.8rem', fontWeight: 'bold'
-                      }}>
-                        {t.type === 'income' ? 'Receita' : 'Despesa'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '1rem', color: t.type==='income'?'var(--success-color)':'var(--danger-color)', fontWeight:'bold' }}>
-                      {formatCurrency(t.amount)}
-                    </td>
-                    {!isSelectionMode && (
-                      <td style={{ padding: '1rem', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                          <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openEditTransaction(t); }} title="Editar">
-                            <Edit2 size={16} />
-                          </button>
-                          <button className="btn-icon" onClick={(e) => { e.stopPropagation(); deleteTransaction(t.id); }} title="Excluir">
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
+                        {isSelectionMode && (
+                          <td style={{ padding: '1rem' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                handleToggleSelect(t.id);
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          </td>
+                        )}
+                        <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>
+                          {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Sem Data'}
+                        </td>
+                        <td style={{ padding: '1rem' }}>
+                          <div style={{ fontWeight: 500 }}>{t.title}</div>
+                          {t.ticker && <span className="text-xs text-primary">{t.ticker}</span>}
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>{wName}</td>
+                        <td style={{ padding: '1rem' }}>
+                          <select 
+                            value={t.category}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              updateTransaction(t.id, { ...t, category: e.target.value });
+                              showToast(`✅ Categoria de "${t.title}" alterada para "${e.target.value}".`);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ 
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              fontSize: '0.875rem',
+                              padding: '0.2rem',
+                              cursor: 'pointer',
+                              outline: 'none',
+                              borderRadius: '4px',
+                              width: '100%'
+                            }}
+                            onMouseEnter={(e) => e.target.style.background = 'rgba(255,255,255,0.05)'}
+                            onMouseLeave={(e) => e.target.style.background = 'transparent'}
+                          >
+                            {CATEGORIES.map(cat => (
+                              <option key={cat.id} value={cat.id}>{cat.id}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={{ padding: '1rem' }}>
+                          <span style={{ 
+                            padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)', 
+                            background: t.type === 'income' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                            color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)',
+                            fontSize: '0.8rem', fontWeight: 'bold'
+                          }}>
+                            {t.type === 'income' ? 'Receita' : 'Despesa'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '1rem', color: t.type==='income'?'var(--success-color)':'var(--danger-color)', fontWeight:'bold' }}>
+                          {formatCurrency(t.amount)}
+                        </td>
+                        {!isSelectionMode && (
+                          <td style={{ padding: '1rem', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openEditTransaction(t); }} title="Editar">
+                                <Edit2 size={16} />
+                              </button>
+                              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); deleteTransaction(t.id); }} title="Excluir">
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  });
+                } catch (err) {
+                  console.error('Render table error:', err);
+                  return null;
+                }
+              })()}
               {transactions.length === 0 && (
                 <tr>
                   <td colSpan="7" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Nenhuma transação salva no sistema.</td>
@@ -1452,7 +1481,7 @@ export default function Dashboard() {
                         <div style={{ fontWeight: 'bold', color: 'var(--primary-color)' }}>{p.ticker}</div>
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>{p.quantity}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatCurrency(p.quantity > 0 ? p.totalInvested / p.quantity : 0)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatCurrency(p.quantity > 0 ? (p.totalInvested / p.quantity) : 0)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatCurrency(p.totalInvested)}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--success-color)' }}>{formatCurrency(p.dividends)}</td>
                     </tr>
