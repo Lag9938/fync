@@ -184,3 +184,26 @@
   border-radius: 12px;
   margin-top: 1.5rem;
 }
+
+@media (max-width: 992px) {
+  .auth-container {
+    flex-direction: column;
+  }
+
+  .auth-branding {
+    display: none !important; /* Force hide branding on mobile */
+  }
+
+  .auth-form-side {
+    padding: 1.5rem 1rem;
+    width: 100%;
+  }
+
+  .auth-card {
+    padding: 2rem 1.5rem;
+  }
+
+  .auth-title {
+    font-size: 1.5rem;
+  }
+}

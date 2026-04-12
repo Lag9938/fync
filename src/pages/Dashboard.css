@@ -4,6 +4,19 @@
   width: 100%;
   overflow: hidden;
   background-color: var(--bg-base);
+  position: relative;
+}
+
+.sidebar-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 90;
+  display: none;
 }
 
 .sidebar {
@@ -12,8 +25,9 @@
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  transition: all 0.3s ease;
-  z-index: 10;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+  height: 100%;
 }
 
 .sidebar-header {
@@ -53,6 +67,7 @@
   font-weight: 500;
   transition: all var(--transition-fast);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .nav-item:hover {
@@ -76,6 +91,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  width: 100%;
 }
 
 .top-header {
@@ -87,7 +103,22 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 2rem;
-  z-index: 5;
+  z-index: 50;
+}
+
+.menu-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-main);
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: var(--radius-md);
+  transition: background 0.2s;
+}
+
+.menu-toggle:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .header-search {
@@ -154,6 +185,7 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
+  gap: 1rem;
 }
 
 .dashboard-title {
@@ -315,7 +347,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  z-index: 1000;
 }
 
 .modal-content {
@@ -323,6 +355,8 @@
   max-width: 500px;
   padding: 2rem;
   border-radius: var(--radius-xl);
+  max-height: 95vh;
+  overflow-y: auto;
 }
 
 .modal-header {
@@ -332,21 +366,87 @@
   margin-bottom: 1.5rem;
 }
 
-@media (max-width: 1024px) {
+/* Responsive Overrides */
+@media (max-width: 1200px) {
   .charts-section {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 992px) {
+  .menu-toggle {
+    display: flex;
+  }
+  
   .sidebar {
     position: fixed;
-    transform: translateX(-100%);
+    left: -280px;
+    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.5);
   }
+  
   .sidebar.open {
-    transform: translateX(0);
+    left: 0;
   }
+  
+  .sidebar-open .sidebar-overlay {
+    display: block;
+  }
+
+  .top-header {
+    padding: 0 1rem;
+  }
+
+  .header-search {
+    display: none; /* Hide search in small headers */
+  }
+
+  .user-info {
+    display: none !important; /* Hide label, keep avatar */
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-scroll-area {
+    padding: 1rem;
+  }
+
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dashboard-title {
+    font-size: 1.5rem;
+  }
+
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .transaction-item {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .transaction-actions {
+    display: none; /* Hide action buttons in lists on mobile to save space */
+  }
+
+  .stat-card {
+    padding: 1rem;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
+  }
+}
+
+/* Specific fix for the reports table on mobile */
+@media (max-width: 640px) {
+  .glass-panel table th:nth-child(4),
+  .glass-panel table td:nth-child(4),
+  .glass-panel table th:nth-child(6),
+  .glass-panel table td:nth-child(6) {
+    display: none; /* Hide Wallet and Type on small mobile */
   }
 }

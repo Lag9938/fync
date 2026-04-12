@@ -41,7 +41,8 @@ import {
   Bitcoin,
   Calculator,
   LineChart,
-  HelpCircle
+  HelpCircle,
+  Menu
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -78,6 +79,7 @@ export default function Dashboard() {
   // Multi-selection state
   const [selectedIds, setSelectedIds] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // OFX Import state
   const [ofxPreview, setOfxPreview] = useState(null); // { transactions: [...] } or null
@@ -1914,20 +1916,23 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="dashboard-layout">
+    <div className={`dashboard-layout ${isSidebarOpen ? 'sidebar-open' : ''}`}>
+      {/* Sidebar Overlay for mobile */}
+      {isSidebarOpen && <div className="sidebar-overlay" onClick={() => setIsSidebarOpen(false)}></div>}
+
       {/* Sidebar */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">
             <Wallet /> Fync
           </div>
         </div>
         <nav className="sidebar-nav">
-          <div className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}><LayoutDashboard size={20} /> Visão Geral</div>
-          <div className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}><PieChart size={20} /> Relatórios</div>
-          <div className={`nav-item ${activeTab === 'investments' ? 'active' : ''}`} onClick={() => setActiveTab('investments')}><TrendingUp size={20} /> Investimentos</div>
-          <div className={`nav-item ${activeTab === 'wallets' ? 'active' : ''}`} onClick={() => setActiveTab('wallets')}><CreditCard size={20} /> Carteiras</div>
-          <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}><Settings size={20} /> Configurações</div>
+          <div className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => { setActiveTab('overview'); setIsSidebarOpen(false); }}><LayoutDashboard size={20} /> Visão Geral</div>
+          <div className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }}><PieChart size={20} /> Relatórios</div>
+          <div className={`nav-item ${activeTab === 'investments' ? 'active' : ''}`} onClick={() => { setActiveTab('investments'); setIsSidebarOpen(false); }}><TrendingUp size={20} /> Investimentos</div>
+          <div className={`nav-item ${activeTab === 'wallets' ? 'active' : ''}`} onClick={() => { setActiveTab('wallets'); setIsSidebarOpen(false); }}><CreditCard size={20} /> Carteiras</div>
+          <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }}><Settings size={20} /> Configurações</div>
         </nav>
         <div className="sidebar-footer">
           <div className="nav-item" onClick={logout}><LogOut size={20} /> Sair</div>
@@ -1937,9 +1942,14 @@ export default function Dashboard() {
       {/* Main Content */}
       <main className="main-content">
         <header className="top-header">
-          <div className="header-search">
-            <Search className="search-icon" size={18} />
-            <input type="text" className="search-input" placeholder="Buscar..." />
+          <div className="flex items-center gap-4">
+            <button className="menu-toggle btn-icon" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
+              <Menu size={24} />
+            </button>
+            <div className="header-search">
+              <Search className="search-icon" size={18} />
+              <input type="text" className="search-input" placeholder="Buscar..." />
+            </div>
           </div>
           <div className="header-actions">
             <button className="btn-icon"><Bell size={20} /></button>
