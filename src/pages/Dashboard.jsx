@@ -1914,23 +1914,24 @@ export default function Dashboard() {
 
         for (const sheetName of workbook.SheetNames) {
           const sheet = workbook.Sheets[sheetName];
-          // Read as raw 2D array — no header assumptions
           const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
-          // Scan first 25 rows to find the real header row (B3 has metadata rows first)
-          const B3_KEYWORDS = ['data', 'movimenta', 'produto', 'ticker', 'codigo', 'quantidade', 'valor'];
+          // Normalize helper to remove accents for comparisons
+          const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+
+          // Extended B3 keywords: covers both Movimentações and Proventos formats
+          const B3_KEYWORDS = ['data', 'produto', 'ticker', 'codigo', 'quantidade', 'valor', 'evento', 'movimenta', 'previsao', 'pagamento'];
           let headerRowIdx = -1;
           for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
-            const rowClean = rawRows[i].join(' ').toLowerCase()
-              .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            const rowClean = norm(rawRows[i].join(' '));
             const hits = B3_KEYWORDS.filter(kw => rowClean.includes(kw));
-            if (hits.length >= 2) { headerRowIdx = i; break; }
+            if (hits.length >= 1) { // Only need 1 hit now — file has no metadata rows
+              headerRowIdx = i; break;
+            }
           }
           if (headerRowIdx === -1) continue;
 
-          const headers = rawRows[headerRowIdx].map(h =>
-            String(h).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
-          );
+          const headers = rawRows[headerRowIdx].map(h => norm(h));
           const colIdx = (...cands) => {
             for (const c of cands) {
               const idx = headers.findIndex(h => h.includes(c));
@@ -1939,12 +1940,15 @@ export default function Dashboard() {
             return -1;
           };
 
-          const iDate   = colIdx('data');
-          const iMov    = colIdx('movimenta', 'tipo', 'entrada');
-          const iTicker = colIdx('codigo de negociacao', 'ticker', 'codigo', 'produto', 'ativo');
+          // Support BOTH B3 formats:
+          // Proventos:    Produto | Tipo | Tipo de Evento | Previsão de pagamento | ... | Quantidade | Preço unitário | Valor líquido
+          // Movimentações: Data | Movimentação | Produto/Código | Quantidade | Preço | Valor
+          const iDate   = colIdx('previsao', 'pagamento', 'data', 'date');
+          const iMov    = colIdx('tipo de evento', 'movimenta', 'evento', 'tipo de neg');
+          const iTicker = colIdx('produto', 'codigo de negociacao', 'ticker', 'codigo', 'ativo');
           const iQty    = colIdx('quantidade', 'qtd');
-          const iPrice  = colIdx('preco', 'cotacao', 'unit');
-          const iTotal  = colIdx('valor de operacao', 'valor total', 'montante', 'financeiro', 'valor');
+          const iPrice  = colIdx('preco unitario', 'preco', 'cotacao', 'unit');
+          const iTotal  = colIdx('valor liquido', 'valor de operacao', 'valor total', 'montante', 'financeiro', 'valor');
 
           for (let i = headerRowIdx + 1; i < rawRows.length; i++) {
             const row = rawRows[i];
@@ -1952,42 +1956,49 @@ export default function Dashboard() {
 
             const rawDate   = iDate   >= 0 ? row[iDate]   : '';
             const movType   = String(iMov    >= 0 ? row[iMov]    || '' : '');
-            const rawTicker = String(iTicker >= 0 ? row[iTicker] || '' : '');
+            const rawProd   = String(iTicker >= 0 ? row[iTicker] || '' : '');
             const rawQty    = String(iQty    >= 0 ? row[iQty]    || '1' : '1');
             const rawPrice  = String(iPrice  >= 0 ? row[iPrice]  || '0' : '0');
             const rawTotal  = String(iTotal  >= 0 ? row[iTotal]  || '0' : '0');
+
+            // Extract ticker: "BBDC4 - BANCO BRADESCO S/A" → "BBDC4"
+            const ticker = rawProd.split(/[-\s]/)[0].toUpperCase().trim();
+            if (!ticker || ticker.length < 3 || ticker === 'TOTAL') continue;
 
             const quantity = parseFloat(rawQty.replace(',', '.')) || 1;
             const price    = parseFloat(rawPrice.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
             let   total    = parseFloat(rawTotal.replace(/[^0-9.,-]/g, '').replace(',', '.')) || 0;
             if (!total && price) total = price * quantity;
+            if (Math.abs(total) === 0) continue;
 
+            // Parse date
             let dateStr = '';
             if (rawDate instanceof Date) {
               dateStr = rawDate.toISOString().split('T')[0];
             } else {
-              const parts = String(rawDate).split('/');
+              const s = String(rawDate).trim();
+              // DD/MM/YYYY
+              const parts = s.split('/');
               if (parts.length === 3) {
                 const y = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
                 dateStr = `${y}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
               } else {
-                const num = Number(rawDate);
+                // Excel serial number
+                const num = Number(s);
                 if (!isNaN(num) && num > 40000) {
                   const d = new Date(Math.round((num - 25569) * 86400 * 1000));
                   dateStr = d.toISOString().split('T')[0];
                 } else {
-                  dateStr = String(rawDate);
+                  // YYYY-MM-DD already?
+                  dateStr = s.match(/\d{4}-\d{2}-\d{2}/) ? s : new Date().toISOString().split('T')[0];
                 }
               }
             }
 
-            const ticker = rawTicker.toUpperCase().trim();
-            const ml = movType.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-            const isDividend = ml.includes('dividend') || ml.includes('jcp') || ml.includes('rendimento') || ml.includes('provento') || ml.includes('amortizac');
+            const ml = norm(movType);
+            const isDividend = ml.includes('dividend') || ml.includes('jcp') || ml.includes('juros sobre capital') || ml.includes('rendimento') || ml.includes('provento') || ml.includes('amortizac') || ml.includes('remuneracao');
             const isSell     = ml.includes('venda') || ml.includes('aliena');
             const isBuy      = ml.includes('compra') || ml.includes('subscri') || ml.includes('aquisicao');
-
-            if (!dateStr.match(/\d{4}-\d{2}-\d{2}/) || !ticker || Math.abs(total) === 0) continue;
 
             mapped.push({
               date: dateStr, ticker, movType, quantity, price,
@@ -2000,7 +2011,7 @@ export default function Dashboard() {
         }
 
         if (mapped.length === 0) {
-          alert('Nenhuma movimenta\u00e7\u00e3o detectada.\n\nDica: Use o extrato de "Movimenta\u00e7\u00f5es" da B3/CEI com colunas: Data, Produto/Ticker, Movimenta\u00e7\u00e3o, Quantidade e Valor.');
+          alert('Nenhuma movimenta\u00e7\u00e3o detectada.\n\nVerifique se o arquivo \u00e9 o extrato de Proventos ou Movimenta\u00e7\u00f5es da B3 com colunas: Produto, Quantidade e Valor.');
           setB3Preview(null);
         } else {
           setB3Preview({ rows: mapped });
