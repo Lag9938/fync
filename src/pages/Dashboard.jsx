@@ -714,18 +714,55 @@ export default function Dashboard() {
   };
 
   const handleExportExcel = () => {
-    const worksheet = XLSX.utils.json_to_sheet(filteredTransactions.map(t => ({
-      Data: new Date(t.date).toLocaleDateString('pt-BR'),
-      Titulo: t.title,
-      Valor: t.amount,
-      Tipo: t.type === 'income' ? 'Receita' : 'Despesa',
-      Categoria: t.category,
-      Descricao: t.description
-    })));
+    const userName = currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0] || 'Usuário';
+    const period = getDisplaySubtitle ? getDisplaySubtitle() : '';
+    const totalIncome = filteredTotals.income || 0;
+    const totalExpense = filteredTotals.expense || 0;
+    const totalBalance = filteredTotals.balance || 0;
+
+    // ---- Sheet 1: Resumo ----
+    const summaryData = [
+      ['FYNC - Relatório Financeiro'],
+      [`Proprietário: ${userName}`],
+      [`Período: ${period}`],
+      [`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`],
+      [],
+      ['RESUMO DO PERÍODO'],
+      ['Receitas Totais', formatCurrency(totalIncome)],
+      ['Despesas Totais', formatCurrency(totalExpense)],
+      ['Saldo Final', formatCurrency(totalBalance)],
+      ['Fync Score', `${healthScore}/100`],
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+
+    // ---- Sheet 2: Transações ----
+    const headers = ['Data', 'Título', 'Categoria', 'Tipo', 'Carteira', 'Descrição', 'Valor (R$)'];
+    const rowData = filteredTransactions.map(t => [
+      new Date(t.date).toLocaleDateString('pt-BR'),
+      t.title,
+      t.category,
+      t.type === 'income' ? 'Receita' : 'Despesa',
+      wallets.find(w => w.id === t.walletId)?.name || 'Sem Carteira',
+      t.description || '',
+      t.type === 'income' ? t.amount : -t.amount
+    ]);
+    // Totals row
+    rowData.push([]);
+    rowData.push(['', '', '', '', '', 'Receitas:', totalIncome]);
+    rowData.push(['', '', '', '', '', 'Despesas:', -totalExpense]);
+    rowData.push(['', '', '', '', '', 'Saldo:', totalBalance]);
+
+    const wsTransactions = XLSX.utils.aoa_to_sheet([headers, ...rowData]);
+
+    // Column widths
+    wsTransactions['!cols'] = [{ wch: 12 }, { wch: 40 }, { wch: 18 }, { wch: 10 }, { wch: 18 }, { wch: 30 }, { wch: 14 }];
+    wsSummary['!cols'] = [{ wch: 28 }, { wch: 20 }];
+
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Transações");
-    XLSX.writeFile(workbook, `extrato_fync_${new Date().toISOString().split('T')[0]}.xlsx`);
-    showToast("Excel exportado com sucesso!");
+    XLSX.utils.book_append_sheet(workbook, wsSummary, 'Resumo');
+    XLSX.utils.book_append_sheet(workbook, wsTransactions, 'Transações');
+    XLSX.writeFile(workbook, `fync_extrato_${period.replace(/[^a-z0-9]/gi,'_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    showToast('Excel exportado com sucesso!');
   };
 
   const formatCurrency = (value) => {
@@ -963,23 +1000,76 @@ export default function Dashboard() {
 
   const exportToExcel = () => {
     if (transactions.length === 0) {
-      alert("Nenhum dado para exportar");
+      alert('Nenhum dado para exportar');
       return;
     }
-    const ws = XLSX.utils.json_to_sheet(transactions.map(t => {
-      const walletName = wallets.find(w => w.id === t.walletId)?.name || 'Sem Carteira';
-      return {
-        Data: new Date(t.date).toLocaleDateString('pt-BR'),
-        Título: t.title,
-        Categoria: t.category,
-        Tipo: t.type === 'income' ? 'Receita' : 'Despesa',
-        Carteira: walletName,
-        Valor: t.amount
-      }
-    }));
+    const userName = currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0] || 'Usuário';
+    const allIncome = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const allExpense = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+
+    // ---- Sheet 1: Resumo Geral ----
+    const summaryData = [
+      ['FYNC - Histórico Financeiro Completo'],
+      [`Proprietário: ${userName}`],
+      [`Exportado em: ${new Date().toLocaleDateString('pt-BR')}`],
+      [],
+      ['TOTALIZADOR GERAL'],
+      ['Total de Receitas', formatCurrency(allIncome)],
+      ['Total de Despesas', formatCurrency(allExpense)],
+      ['Saldo Global', formatCurrency(allIncome - allExpense)],
+      [],
+      ['Fync Score', `${healthScore}/100`],
+      ['Total de Lançamentos', transactions.length],
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    wsSummary['!cols'] = [{ wch: 30 }, { wch: 20 }];
+
+    // ---- Sheet 2: Histórico Completo ----
+    const headers = ['#', 'Data', 'Título', 'Categoria', 'Subcategoria', 'Tipo', 'Carteira', 'Descrição', 'Valor (R$)'];
+    const rowData = [...transactions]
+      .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+      .map((t, i) => [
+        i + 1,
+        new Date(t.date).toLocaleDateString('pt-BR'),
+        t.title,
+        t.category,
+        t.subCategory || '',
+        t.type === 'income' ? 'Receita' : 'Despesa',
+        wallets.find(w => w.id === t.walletId)?.name || 'Sem Carteira',
+        t.description || '',
+        t.type === 'income' ? t.amount : -t.amount
+      ]);
+    rowData.push([]);
+    rowData.push(['', '', '', '', '', '', '', 'Total Receitas:', allIncome]);
+    rowData.push(['', '', '', '', '', '', '', 'Total Despesas:', -allExpense]);
+    rowData.push(['', '', '', '', '', '', '', 'SALDO:', allIncome - allExpense]);
+
+    const wsHistory = XLSX.utils.aoa_to_sheet([headers, ...rowData]);
+    wsHistory['!cols'] = [{ wch: 5 }, { wch: 12 }, { wch: 38 }, { wch: 16 }, { wch: 18 }, { wch: 10 }, { wch: 18 }, { wch: 30 }, { wch: 14 }];
+
+    // ---- Sheet 3: Categorias ----
+    const catMap = {};
+    transactions.forEach(t => {
+      if (!catMap[t.category]) catMap[t.category] = { receitas: 0, despesas: 0 };
+      if (t.type === 'income') catMap[t.category].receitas += t.amount;
+      else catMap[t.category].despesas += t.amount;
+    });
+    const catHeaders = ['Categoria', 'Total Receitas', 'Total Despesas', 'Saldo'];
+    const catRows = Object.entries(catMap).map(([cat, vals]) => [
+      cat,
+      vals.receitas,
+      vals.despesas,
+      vals.receitas - vals.despesas
+    ]);
+    const wsCat = XLSX.utils.aoa_to_sheet([catHeaders, ...catRows]);
+    wsCat['!cols'] = [{ wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Histórico");
-    XLSX.writeFile(wb, "fync_historico.xlsx");
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo Geral');
+    XLSX.utils.book_append_sheet(wb, wsHistory, 'Histórico');
+    XLSX.utils.book_append_sheet(wb, wsCat, 'Por Categoria');
+    XLSX.writeFile(wb, `fync_relatorio_completo_${new Date().toISOString().split('T')[0]}.xlsx`);
+    showToast('Excel exportado com sucesso!');
   };
 
   const exportToPDF = () => {
