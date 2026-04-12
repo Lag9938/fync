@@ -33,14 +33,20 @@ export function AuthProvider({ children }) {
   };
 
   const loginWithGoogle = async () => {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin + '/dashboard',
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin + '/dashboard',
+        }
+      });
+      if (error) {
+        return { success: false, message: error.message };
       }
-    });
-    if (error) return { success: false, message: error.message };
-    return { success: true };
+      return { success: true };
+    } catch (err) {
+      return { success: false, message: 'Erro inesperado ao conectar com Google.' };
+    }
   };
 
   const register = async (name, email, password) => {

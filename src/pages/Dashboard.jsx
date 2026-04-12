@@ -51,7 +51,7 @@ import {
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { parseOFX } from '../utils/ofxParser';
 import './Dashboard.css';
 
@@ -97,6 +97,12 @@ export default function Dashboard() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Header Menu and Search States
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [dismissedNotifs, setDismissedNotifs] = useState([]);
 
   // OFX Import state
   const [ofxPreview, setOfxPreview] = useState(null); // { transactions: [...] } or null
@@ -428,6 +434,16 @@ export default function Dashboard() {
   const filteredTransactions = useMemo(() => {
     return (transactions || []).filter(t => {
       if (!t || !t.date) return false;
+      
+      // Global Text Search
+      if (searchTerm) {
+        const query = searchTerm.toLowerCase();
+        const matchesTitle = t.title?.toLowerCase().includes(query);
+        const matchesCategory = t.category?.toLowerCase().includes(query);
+        const matchesDescription = t.description?.toLowerCase().includes(query);
+        if (!matchesTitle && !matchesCategory && !matchesDescription) return false;
+      }
+
       const tIso = String(t.date);
       
       if (filterMode === 'month') {
@@ -440,7 +456,7 @@ export default function Dashboard() {
         return tDate >= startObj && tDate <= endObj;
       }
     });
-  }, [transactions, filterMonth, filterMode, filterStartDate, filterEndDate]);
+  }, [transactions, filterMonth, filterMode, filterStartDate, filterEndDate, searchTerm]);
 
   const memoizedSortedTransactions = useMemo(() => {
     try {
@@ -561,8 +577,90 @@ export default function Dashboard() {
   }, [filteredTotals, filteredTransactions, budgets, dynamicCategoryData, goals]);
 
   const handleExportPDF = () => {
+    if (filteredTransactions.length === 0) {
+      alert("Nenhum dado financeiro para exportar neste período.");
+      return;
+    }
+
     const doc = new jsPDF();
-    const tableColumn = ["Data", "Título", "Categoria", "Valor", "Tipo"];
+    const pageWidth = doc.internal.pageSize.getWidth();
+    
+    // --- CABEÇALHO EXECUTIVO ---
+    doc.setFillColor(17, 24, 39); // Fundo escuro igual ao site
+    doc.rect(0, 0, pageWidth, 40, 'F');
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(28);
+    doc.setTextColor(99, 102, 241); // Primary color
+    doc.text("FYNC.", 14, 25);
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+    doc.setTextColor(200, 200, 200);
+    doc.text("Relatório Financeiro Executivo", pageWidth - 14, 25, { align: 'right' });
+    
+    // --- INFORMAÇÕES DO PERÍODO & SCORE ---
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(30, 30, 30);
+    doc.text(`Período: ${getDisplaySubtitle()}`, 14, 55);
+    
+    // Mini tabela/quadrados de resumo
+    // Saldo
+    doc.setFillColor(243, 244, 246);
+    doc.rect(14, 65, 55, 25, 'F');
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text("Saldo", 18, 73);
+    doc.setFontSize(12);
+    doc.setTextColor(40);
+    doc.text(formatCurrency(filteredTotals.balance), 18, 83);
+    
+    // Receitas
+    doc.setFillColor(236, 253, 245);
+    doc.rect(74, 65, 55, 25, 'F');
+    doc.setFontSize(10);
+    doc.setTextColor(16, 185, 129); // text-success
+    doc.text("Receitas (+)", 78, 73);
+    doc.setFontSize(12);
+    doc.text(formatCurrency(filteredTotals.income), 78, 83);
+    
+    // Despesas
+    doc.setFillColor(254, 242, 242);
+    doc.rect(134, 65, 55, 25, 'F');
+    doc.setFontSize(10);
+    doc.setTextColor(239, 68, 68); // text-danger
+    doc.text("Despesas (-)", 138, 73);
+    doc.setFontSize(12);
+    doc.text(formatCurrency(filteredTotals.expense), 138, 83);
+    
+    // Explicação do Fync Score
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(30, 30, 30);
+    doc.text("Análise de Saúde Financeira (Fync Score)", 14, 110);
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    
+    const scoreColor = healthScore > 70 ? [16, 185, 129] : healthScore > 40 ? [99, 102, 241] : [239, 68, 68];
+    const scoreDesc = healthScore > 85 ? 'Gestão de Elite' : healthScore > 70 ? 'Muito Bom' : healthScore > 40 ? 'Pode melhorar' : 'Atenção Crítica';
+    
+    doc.setTextColor(scoreColor[0], scoreColor[1], scoreColor[2]);
+    doc.text(`Score Atual: ${healthScore}/100 - ${scoreDesc}`, 14, 120);
+    
+    doc.setTextColor(100);
+    const explicateLines = [
+      "O Fync Score avalia os seguintes pontos baseados no seu período ativo:",
+      "- Proporção de Economia (ganhar mais do que gasta) pontua positivamente.",
+      "- Evitar o estouro de limites predefinidos de Orçamento.",
+      "- Possuir Investimentos ativos garante pontuação por segurança financeira no longo prazo.",
+      "- Estabelecer Metas de Vida (planejamento futuro) evita penalidades."
+    ];
+    doc.text(explicateLines, 14, 130);
+
+    // --- TABELA DE TRANSAÇÕES ---
+    const tableColumn = ["Data", "Título", "Categoria", "Tipo", "Valor"];
     const tableRows = [];
 
     const sorted = [...filteredTransactions].sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -572,31 +670,33 @@ export default function Dashboard() {
         new Date(t.date).toLocaleDateString('pt-BR'),
         t.title,
         t.category,
-        formatCurrency(t.amount),
-        t.type === 'income' ? 'Receita' : 'Despesa'
+        t.type === 'income' ? 'Receita' : 'Despesa',
+        formatCurrency(t.amount)
       ];
       tableRows.push(transactionData);
     });
 
-    doc.setFontSize(20);
-    doc.setTextColor(99, 102, 241);
-    doc.text("Relatório Fync", 14, 22);
-    
-    doc.setFontSize(12);
-    doc.setTextColor(100);
-    doc.text(`Período: ${getDisplaySubtitle()}`, 14, 30);
-    doc.text(`Saldo Total: ${formatCurrency(filteredTotals.balance)}`, 14, 38);
-    doc.text(`Score de Saúde: ${healthScore}/100`, 14, 46);
-
-    doc.autoTable({
+    autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 55,
+      startY: 165,
       theme: 'grid',
-      headStyles: { fillColor: [99, 102, 241] }
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [17, 24, 39], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [249, 250, 251] },
+      didParseCell: function(data) {
+        if (data.section === 'body' && data.column.index === 3) { // Coluna de Tipo
+          if (data.cell.raw === 'Receita') {
+            data.cell.styles.textColor = [16, 185, 129];
+            data.cell.styles.fontStyle = 'bold';
+          } else {
+            data.cell.styles.textColor = [239, 68, 68];
+          }
+        }
+      }
     });
 
-    doc.save(`relatorio_fync_${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`relatorio_${getDisplaySubtitle().replace(/ /g, '_')}_fync.pdf`);
     showToast("PDF gerado com sucesso!");
   };
 
@@ -1001,16 +1101,13 @@ export default function Dashboard() {
         </div>
         <div className="flex gap-2">
            <button className="btn btn-secondary" onClick={handleExportPDF} title="Baixar relatório PDF">
-             <FileDown size={18} />
-             PDF
+             <FileDown size={18} className="text-danger" /> PDF
            </button>
            <button className="btn btn-secondary" onClick={handleExportExcel} title="Baixar extrato Excel">
-             <FileDown size={18} />
-             Excel
+             <FileDown size={18} className="text-success" /> Excel
            </button>
            <button className="btn btn-primary" onClick={() => openNewTransaction('expense', 'Alimentação')}>
-             <Plus size={18} />
-             Nova Transação
+             <Plus size={18} /> Nova Transação
            </button>
         </div>
       </div>
@@ -1043,7 +1140,7 @@ export default function Dashboard() {
           </div>
           <div className="stat-value text-danger">{formatCurrency(filteredTotals.expense)}</div>
         </div>
-        <div className="stat-card glass-panel" style={{ border: `1px solid ${healthScore > 70 ? 'rgba(16, 185, 129, 0.3)' : healthScore > 40 ? 'rgba(99, 102, 241, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
+        <div className="stat-card glass-panel fync-score-container" style={{ overflow: 'visible', border: `1px solid ${healthScore > 70 ? 'rgba(16, 185, 129, 0.3)' : healthScore > 40 ? 'rgba(99, 102, 241, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
           <div className="stat-header">
             <span className="stat-title" style={{ color: healthScore > 70 ? 'var(--success-color)' : healthScore > 40 ? 'var(--text-main)' : 'var(--danger-color)' }}>Fync Score</span>
             <div className="stat-icon" style={{ 
@@ -1060,6 +1157,16 @@ export default function Dashboard() {
           <p className="text-xs mt-1" style={{ color: healthScore > 70 ? 'var(--success-color)' : healthScore > 40 ? 'var(--text-muted)' : 'var(--danger-color)', fontWeight: 'bold' }}>
             {healthScore > 85 ? 'Gestão de Elite!' : healthScore > 70 ? 'Muito Bom!' : healthScore > 40 ? 'Pode melhorar' : 'Atenção Crítica'}
           </p>
+
+          <div className="fync-score-tooltip glass-panel">
+            <div className="score-tooltip-title">Como calculamos?</div>
+            <ul className="score-tooltip-list">
+              <li><span className="score-good">+</span> Economia maior que despesas</li>
+              <li><span className="score-good">+</span> Metas & Investimentos ativos</li>
+              <li><span className="score-bad">-</span> Gastar mais que recebe</li>
+              <li><span className="score-bad">-</span> Limites do orçamento estourados</li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -2388,6 +2495,75 @@ export default function Dashboard() {
     );
   };
 
+  // --- MOTOR INTELIGENTE DE NOTIFICAÇÕES ---
+  const notifications = useMemo(() => {
+    const list = [];
+    
+    // 1. Alerta de Orçamentos
+    Object.keys(budgets).forEach(cat => {
+      const limit = budgets[cat];
+      if (limit > 0) {
+        const spent = dynamicCategoryData.find(c => c.id === cat && c.type === 'expense')?.amount || 0;
+        const ratio = spent / limit;
+        if (ratio >= 0.9 && ratio < 1) {
+          list.push({ 
+            id: `budget_warn_${cat}`, 
+            type: 'warning', 
+            icon: <PieChart size={16}/>, 
+            title: 'Atenção ao Orçamento!', 
+            desc: `Você usou ${(ratio*100).toFixed(0)}% do limite de ${cat}.`, 
+            action: 'reports' 
+          });
+        } else if (ratio >= 1) {
+          list.push({ 
+            id: `budget_crit_${cat}`, 
+            type: 'danger', 
+            icon: <PieChart size={16}/>, 
+            title: 'Orçamento Estourado!', 
+            desc: `Você passou do limite de ${cat}.`, 
+            action: 'reports' 
+          });
+        }
+      }
+    });
+
+    // 2. Receitas Grandes
+    const recentIncomes = filteredTransactions.filter(t => t.type === 'income' && t.amount >= 500);
+    if (recentIncomes.length > 0) {
+      list.push({ 
+        id: `recent_income_${recentIncomes[0].id || '1'}`, 
+        type: 'success', 
+        icon: <Wallet size={16}/>, 
+        title: 'Receita Significativa!', 
+        desc: `Entrada de ${formatCurrency(recentIncomes[0].amount)} computada.`, 
+        action: 'overview' 
+      });
+    }
+
+    // 3. Saldo Negativo
+    if (filteredTotals.balance < 0) {
+       list.push({ 
+        id: 'negative_balance', 
+        type: 'danger', 
+        icon: <ArrowDownRight size={16}/>, 
+        title: 'Saldo Negativo!', 
+        desc: `Atenção: seu saldo no período está negativo.`, 
+        action: 'overview' 
+      });
+    }
+
+    return list;
+  }, [budgets, dynamicCategoryData, filteredTransactions, filteredTotals]);
+
+  const activeNotifs = notifications.filter(n => !dismissedNotifs.includes(n.id));
+
+  const handleNotifClick = (notif) => {
+     setDismissedNotifs([...dismissedNotifs, notif.id]);
+     setActiveTab(notif.action);
+     setIsNotifOpen(false);
+  };
+  // ------------------------------------------
+
   return (
     <div className={`dashboard-layout ${isSidebarOpen ? 'sidebar-open' : ''}`}>
       {/* Sidebar Overlay for mobile */}
@@ -2397,7 +2573,8 @@ export default function Dashboard() {
       <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">
-            <Wallet /> Fync
+            <img src="/logo.png" alt="Fync Logo" style={{ width: '28px', height: '28px', objectFit: 'contain' }} /> 
+            Fync
           </div>
         </div>
         <nav className="sidebar-nav">
@@ -2423,17 +2600,77 @@ export default function Dashboard() {
             </button>
             <div className="header-search">
               <Search className="search-icon" size={18} />
-              <input type="text" className="search-input" placeholder="Buscar..." />
+              <input type="text" className="search-input" placeholder="Buscar lançamentos..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
             </div>
           </div>
           <div className="header-actions">
-            <button className="btn-icon"><Bell size={20} /></button>
-            <div className="user-profile">
-              <div className="user-info text-right" style={{ display: 'flex', flexDirection: 'column' }}>
-                <span className="font-medium text-sm">{currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0]}</span>
-                <span className="text-xs text-muted">Plano Premium</span>
+            
+            {/* Notification Dropdown */}
+            <div className="relative-container">
+              <button className="btn-icon" onClick={() => { setIsNotifOpen(!isNotifOpen); setIsProfileOpen(false); }}>
+                <Bell size={20} />
+                {activeNotifs.length > 0 && <span className="notif-badge"></span>}
+              </button>
+              
+              {isNotifOpen && (
+                <div className="header-dropdown glass-panel">
+                  <div className="header-dropdown-title flex items-center justify-between">
+                    <span>Notificações</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{activeNotifs.length} novas</span>
+                  </div>
+                  
+                  {activeNotifs.length === 0 ? (
+                    <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      Você não tem notificações novas.
+                    </div>
+                  ) : (
+                    activeNotifs.map(notif => (
+                      <div key={notif.id} className="header-dropdown-item" onClick={() => handleNotifClick(notif)}>
+                        <div className="notif-icon" style={{ 
+                          background: notif.type === 'danger' ? 'rgba(239, 68, 68, 0.1)' : notif.type === 'warning' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(16, 185, 129, 0.1)', 
+                          color: notif.type === 'danger' ? 'var(--danger-color)' : notif.type === 'warning' ? '#f59e0b' : 'var(--success-color)' 
+                        }}>
+                          {notif.icon}
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>{notif.title}</p>
+                          <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{notif.desc}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* User Profile Dropdown */}
+            <div className="relative-container">
+              <div className="user-profile" style={{ cursor: 'pointer' }} onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
+                <div className="user-info text-right" style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span className="font-medium text-sm">{currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0]}</span>
+                  <span className="text-xs" style={{ color: 'var(--primary-color)', fontWeight: 'bold' }}>Plano Premium</span>
+                </div>
+                <div className="user-avatar" style={{ background: accentColor }}>{(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}</div>
               </div>
-              <div className="user-avatar" style={{ background: accentColor }}>{(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}</div>
+
+              {isProfileOpen && (
+                <div className="header-dropdown glass-panel profile-dropdown">
+                  <div className="header-dropdown-item">
+                    <User size={16} /> Meu Perfil
+                  </div>
+                  <div className="header-dropdown-item">
+                    <Settings size={16} /> Configurações
+                  </div>
+                  <div className="dropdown-divider"></div>
+                  <div className="header-dropdown-item" style={{ color: 'var(--primary-color)' }}>
+                    <Shield size={16} /> Assinatura Premium
+                  </div>
+                  <div className="dropdown-divider"></div>
+                  <div className="header-dropdown-item text-danger" onClick={logout}>
+                    <LogOut size={16} /> Sair da Fync
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </header>

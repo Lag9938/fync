@@ -12,7 +12,7 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { register } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -158,11 +158,16 @@ export default function Register() {
             onClick={async () => {
               setLoading(true);
               setError('');
-              const result = await loginWithGoogle();
-              if (result && !result.success) {
-                setError(result.message || 'Erro ao conectar com Google. Verifique o Supabase.');
+              try {
+                const result = await loginWithGoogle();
+                if (result && !result.success) {
+                  setError(result.message || 'Erro ao conectar com Google. Verifique o Supabase.');
+                }
+              } catch (err) {
+                setError('Erro ao tentar conectar com o Google.');
+              } finally {
+                setLoading(false);
               }
-              setLoading(false);
             }}
             disabled={loading}
           >

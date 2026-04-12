@@ -10,7 +10,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -125,11 +125,16 @@ export default function Login() {
             onClick={async () => {
               setLoading(true);
               setError('');
-              const result = await loginWithGoogle();
-              if (result && !result.success) {
-                setError(result.message || 'Erro ao conectar com Google. Verifique o Supabase.');
+              try {
+                const result = await loginWithGoogle();
+                if (result && !result.success) {
+                  setError(result.message || 'Erro ao conectar com Google. Verifique o Supabase.');
+                }
+              } catch (err) {
+                setError('Erro ao tentar conectar com o Google.');
+              } finally {
+                setLoading(false);
               }
-              setLoading(false);
             }}
             disabled={loading}
           >
