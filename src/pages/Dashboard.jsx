@@ -1622,7 +1622,6 @@ export default function Dashboard() {
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-          </div>
         </>
       )}
 
