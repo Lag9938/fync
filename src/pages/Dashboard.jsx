@@ -2648,7 +2648,7 @@ export default function Dashboard() {
               <div className="user-profile" style={{ cursor: 'pointer' }} onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
                 <div className="user-info text-right" style={{ display: 'flex', flexDirection: 'column' }}>
                   <span className="font-medium text-sm">{currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0]}</span>
-                  <span className="text-xs" style={{ color: 'var(--primary-color)', fontWeight: 'bold' }}>Plano Premium</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Membro</span>
                 </div>
                 <div className="user-avatar" style={{ background: accentColor }}>{(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}</div>
               </div>
@@ -2662,8 +2662,8 @@ export default function Dashboard() {
                     <Settings size={16} /> Configurações
                   </div>
                   <div className="dropdown-divider"></div>
-                  <div className="header-dropdown-item" style={{ color: 'var(--primary-color)' }} onClick={() => { setActiveTab('subscriptions'); setIsProfileOpen(false); }}>
-                    <Shield size={16} /> Assinatura Premium
+                  <div className="header-dropdown-item" onClick={() => { setActiveTab('subscriptions'); setIsProfileOpen(false); }}>
+                    <Shield size={16} /> Minhas Assinaturas
                   </div>
                   <div className="dropdown-divider"></div>
                   <div className="header-dropdown-item text-danger" onClick={logout}>
