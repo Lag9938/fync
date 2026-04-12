@@ -105,6 +105,12 @@ export default function Dashboard() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [dismissedNotifs, setDismissedNotifs] = useState([]);
 
+  // B3 Importer State
+  const [isB3ImportOpen, setIsB3ImportOpen] = useState(false);
+  const [b3Preview, setB3Preview] = useState(null); // { rows: [...] }
+  const [b3Importing, setB3Importing] = useState(false);
+  const [b3DragOver, setB3DragOver] = useState(false);
+
   // OFX Import state
   const [ofxPreview, setOfxPreview] = useState(null); // { transactions: [...] } or null
 
@@ -1808,6 +1814,95 @@ export default function Dashboard() {
     </div>
   );
 
+  // --- B3 IMPORTER ---
+  const parseB3Excel = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const workbook = XLSX.read(e.target.result, { type: 'binary', cellDates: true });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+        // Try to detect columns from the B3 format
+        const mapped = rows.map(row => {
+          // B3 XLSX usually has columns like: Data, Movimentação, Produto, Ticker, Quantidade, Preco, Valor
+          const keys = Object.keys(row);
+          const findVal = (...candidates) => {
+            for (const c of candidates) {
+              const k = keys.find(k => k.toString().toLowerCase().includes(c.toLowerCase()));
+              if (k && row[k] !== '') return row[k];
+            }
+            return '';
+          };
+
+          const rawDate = findVal('data', 'date', 'Data da Neg');
+          const movType  = findVal('movimenta', 'opera', 'tipo', 'mov');
+          const ticker   = findVal('ticker', 'c\u00f3digo', 'codigo', 'produto', 'ativo');
+          const quantity = parseFloat(String(findVal('qtd', 'quantidade', 'quant', 'units')).replace(',', '.')) || 1;
+          const price    = parseFloat(String(findVal('preco', 'pre\u00e7o', 'unit', 'cotacao')).replace(',', '.').replace('R$','')) || 0;
+          const total    = parseFloat(String(findVal('valor total', 'valor', 'montante', 'financeiro')).replace(',', '.').replace('R$','')) || (price * quantity);
+
+          // Determine if it is a buy or receive
+          const movLower = String(movType).toLowerCase();
+          const isBuy = movLower.includes('compra') || movLower.includes('subscri') || movLower.includes('aquisicao') || movLower.includes('aquisi\u00e7\u00e3o');
+          const isSell = movLower.includes('venda') || movLower.includes('aliena');
+          const isDividend = movLower.includes('dividend') || movLower.includes('jcp') || movLower.includes('rendimento') || movLower.includes('provento');
+
+          // Parse date
+          let dateStr = '';
+          if (rawDate instanceof Date) {
+            dateStr = rawDate.toISOString().split('T')[0];
+          } else {
+            const parts = String(rawDate).split('/');
+            if (parts.length === 3) dateStr = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+            else dateStr = rawDate;
+          }
+
+          return {
+            date: dateStr,
+            ticker: String(ticker).toUpperCase().trim(),
+            movType: movType,
+            quantity,
+            price,
+            total: Math.abs(total),
+            type: isDividend ? 'income' : isSell ? 'income' : 'expense',
+            label: isDividend ? 'Dividendo/JCP' : isBuy ? 'Compra' : isSell ? 'Venda' : movType,
+            valid: !!(dateStr && ticker && Math.abs(total) > 0)
+          };
+        }).filter(r => r.valid && r.ticker);
+
+        setB3Preview({ rows: mapped });
+      } catch(err) {
+        alert('Erro ao ler o arquivo. Verifique o formato B3.');
+        console.error(err);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const handleB3Import = async () => {
+    if (!b3Preview) return;
+    setB3Importing(true);
+    for (const row of b3Preview.rows) {
+      await addTransaction({
+        title: `${row.label} ${row.ticker} (${row.quantity} cota${row.quantity > 1 ? 's' : ''})`,
+        amount: row.total,
+        type: row.type,
+        category: 'Investimentos',
+        subCategory: row.type === 'income' ? 'Dividendos / JCP' : 'A\u00e7\u00f5es',
+        ticker: row.ticker,
+        date: row.date || new Date().toISOString().split('T')[0],
+        walletId: wallets[0]?.id || '',
+        description: `Importado via B3 | Tipo: ${row.movType}`,
+      });
+    }
+    setB3Importing(false);
+    setB3Preview(null);
+    setIsB3ImportOpen(false);
+    alert(`\u2705 ${b3Preview.rows.length} movimenta\u00e7\u00f5es importadas com sucesso!`);
+  };
+  // -------------------------
+
   const renderInvestments = () => {
     const investmentTxs = transactions.filter(t => t.category === 'Investimentos');
 
@@ -1852,6 +1947,9 @@ export default function Dashboard() {
             <p className="dashboard-subtitle">Lançamentos centralizados, ativos e cálculos projetivos.</p>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="btn" style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6', border: '1px solid rgba(59,130,246,0.3)' }} onClick={() => setIsB3ImportOpen(true)}>
+              <FileDown size={18} /> Importar B3
+            </button>
             <button className="btn" style={{ background: 'var(--success-light)', color: 'var(--success-color)' }} onClick={() => {
               openNewTransaction('income', 'Investimentos');
               setTitle('Recebimento de Dividendos/JCP');
@@ -1866,6 +1964,94 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
+
+        {/* B3 Import Panel */}
+        {isB3ImportOpen && (
+          <div className="glass-panel" style={{ marginBottom: '2rem', padding: '1.5rem', borderRadius: 'var(--radius-xl)', border: '1px dashed rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.03)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div>
+                <h3 className="font-bold flex items-center gap-2" style={{ color: '#3b82f6' }}>
+                  <FileDown size={20} /> Importar Extrato da B3 (Excel)
+                </h3>
+                <p className="text-sm text-muted mt-1">Acesse o site da B3 → Extrato → Gere o arquivo .xlsx e arraste aqui abaixo.</p>
+              </div>
+              <button className="btn-icon" onClick={() => { setIsB3ImportOpen(false); setB3Preview(null); }}><X size={20}/></button>
+            </div>
+
+            {/* Drag & Drop Zone */}
+            {!b3Preview && (
+              <div
+                onDragOver={e => { e.preventDefault(); setB3DragOver(true); }}
+                onDragLeave={() => setB3DragOver(false)}
+                onDrop={e => {
+                  e.preventDefault();
+                  setB3DragOver(false);
+                  const file = e.dataTransfer.files[0];
+                  if (file) parseB3Excel(file);
+                }}
+                style={{
+                  border: `2px dashed ${b3DragOver ? '#3b82f6' : 'var(--border-color)'}`,
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '3rem',
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  background: b3DragOver ? 'rgba(59,130,246,0.07)' : 'transparent',
+                  transition: 'all 0.2s'
+                }}
+                onClick={() => document.getElementById('b3-file-input').click()}
+              >
+                <FileDown size={36} style={{ margin: '0 auto 0.75rem', color: '#3b82f6', opacity: 0.7 }} />
+                <p className="font-medium">Arraste o arquivo Excel aqui</p>
+                <p className="text-sm text-muted mt-1">ou clique para selecionar</p>
+                <input id="b3-file-input" type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={e => { const f = e.target.files[0]; if(f) parseB3Excel(f); }} />
+              </div>
+            )}
+
+            {/* Preview Table */}
+            {b3Preview && (
+              <div>
+                <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <p className="font-medium text-success">✅ {b3Preview.rows.length} movimentações detectadas</p>
+                  <button className="btn btn-secondary text-sm" onClick={() => setB3Preview(null)}>Cancelar</button>
+                </div>
+                <div style={{ overflowX: 'auto', maxHeight: '280px', overflowY: 'auto', marginBottom: '1rem' }}>
+                  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'0.8rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom:'1px solid var(--border-color)', color:'var(--text-muted)', position:'sticky', top:0, background:'var(--bg-card)' }}>
+                        <th style={{ padding:'0.5rem', textAlign:'left' }}>Data</th>
+                        <th style={{ padding:'0.5rem', textAlign:'left' }}>Ticker</th>
+                        <th style={{ padding:'0.5rem', textAlign:'left' }}>Tipo</th>
+                        <th style={{ padding:'0.5rem', textAlign:'right' }}>Qtd</th>
+                        <th style={{ padding:'0.5rem', textAlign:'right' }}>Valor Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {b3Preview.rows.map((r, i) => (
+                        <tr key={i} style={{ borderBottom:'1px solid var(--border-color)' }}>
+                          <td style={{ padding:'0.5rem' }}>{r.date}</td>
+                          <td style={{ padding:'0.5rem', fontWeight:'bold', color:'var(--primary-color)' }}>{r.ticker}</td>
+                          <td style={{ padding:'0.5rem' }}>
+                            <span style={{ padding:'2px 8px', borderRadius:'999px', fontSize:'0.7rem',  background: r.type === 'income' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: r.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)' }}>{r.label}</span>
+                          </td>
+                          <td style={{ padding:'0.5rem', textAlign:'right' }}>{r.quantity}</td>
+                          <td style={{ padding:'0.5rem', textAlign:'right', fontWeight:'bold' }}>{formatCurrency(r.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  className="btn btn-primary"
+                  style={{ width: '100%' }}
+                  disabled={b3Importing}
+                  onClick={handleB3Import}
+                >
+                  {b3Importing ? 'Importando...' : `✨ Confirmar e Importar ${b3Preview.rows.length} Movimentações`}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
           <div className="stat-card glass-panel">
