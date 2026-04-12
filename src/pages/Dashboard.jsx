@@ -74,7 +74,15 @@ const INVESTMENT_CATEGORIES = [
 export default function Dashboard() {
   const { currentUser, logout } = useAuth();
   const { transactions, totals, addTransaction, updateTransaction, deleteTransaction, deleteTransactions, bulkUpdateCategory, wallets, addWallet, updateWallet, deleteWallet, budgets, updateBudget } = useFinance();
-  const [activeTab, setActiveTab] = useState('overview');
+  
+  // Persistence Loading
+  const savedTab = localStorage.getItem('fync_active_tab') || 'overview';
+  const savedMonth = localStorage.getItem('fync_filter_month');
+  const savedMode = localStorage.getItem('fync_filter_mode') || 'month';
+  const savedStart = localStorage.getItem('fync_filter_start');
+  const savedEnd = localStorage.getItem('fync_filter_end');
+
+  const [activeTab, setActiveTab] = useState(savedTab);
 
   // Multi-selection state
   const [selectedIds, setSelectedIds] = useState([]);
@@ -92,10 +100,30 @@ export default function Dashboard() {
   const currentDate = new Date();
   const initialMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
   
-  const [filterMode, setFilterMode] = useState('month'); 
-  const [filterMonth, setFilterMonth] = useState(initialMonth);
-  const [filterStartDate, setFilterStartDate] = useState(currentDate.toISOString().split('T')[0]);
-  const [filterEndDate, setFilterEndDate] = useState(currentDate.toISOString().split('T')[0]);
+  const [filterMode, setFilterMode] = useState(savedMode); 
+  const [filterMonth, setFilterMonth] = useState(savedMonth || initialMonth);
+  const [filterStartDate, setFilterStartDate] = useState(savedStart || currentDate.toISOString().split('T')[0]);
+  const [filterEndDate, setFilterEndDate] = useState(savedEnd || currentDate.toISOString().split('T')[0]);
+
+  // Filters for Pie Chart
+  const savedExcluded = JSON.parse(localStorage.getItem('fync_excluded_categories') || '[]');
+  const [excludedCategories, setExcludedCategories] = useState(savedExcluded);
+
+  // Persist to localStorage
+  useEffect(() => {
+    localStorage.setItem('fync_active_tab', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    localStorage.setItem('fync_filter_month', filterMonth);
+    localStorage.setItem('fync_filter_mode', filterMode);
+    localStorage.setItem('fync_filter_start', filterStartDate);
+    localStorage.setItem('fync_filter_end', filterEndDate);
+  }, [filterMonth, filterMode, filterStartDate, filterEndDate]);
+
+  useEffect(() => {
+    localStorage.setItem('fync_excluded_categories', JSON.stringify(excludedCategories));
+  }, [excludedCategories]);
   
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(currentDate.getFullYear());
@@ -929,11 +957,27 @@ export default function Dashboard() {
     </div>
   );
 
-  const PIE_COLORS = ['#6366f1', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#f59e0b', '#84cc16'];
-  const pieData = [
-    { name: 'Receitas', value: filteredTotals.income },
-    { name: 'Despesas', value: filteredTotals.expense }
-  ];
+  const PIE_COLORS = ['#10b981', '#ef4444', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#f59e0b', '#84cc16'];
+  
+  const pieData = useMemo(() => {
+    const included = filteredTransactions.filter(t => !excludedCategories.includes(t.category));
+    const totals = included.reduce((acc, curr) => {
+      const amt = parseFloat(curr.amount) || 0;
+      if (curr.type === 'income') acc.income += amt;
+      else acc.expense += amt;
+      return acc;
+    }, { income: 0, expense: 0 });
+
+    return [
+      { name: 'Receitas', value: totals.income },
+      { name: 'Despesas', value: totals.expense }
+    ];
+  }, [filteredTransactions, excludedCategories]);
+
+  const availableCategoriesForPie = useMemo(() => {
+    const cats = new Set(filteredTransactions.map(t => t.category));
+    return Array.from(cats);
+  }, [filteredTransactions]);
 
   const renderReports = () => (
     <div className="animate-fade-in">
@@ -1066,26 +1110,68 @@ export default function Dashboard() {
 
       <div className="stats-grid" style={{ marginBottom: '2rem' }}>
         <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
-          <h2 className="chart-title mb-4">Proporção Receitas x Despesas</h2>
-          <div style={{ width: '100%', height: 300 }}>
-            {filteredTotals.income === 0 && filteredTotals.expense === 0 ? (
-               <div className="flex h-full items-center justify-center text-muted">Sem dados disponíveis.</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+            <h2 className="chart-title" style={{ margin: 0 }}>Proporção Receitas x Despesas</h2>
+            
+            {availableCategoriesForPie.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '300px' }}>
+                <span style={{ width: '100%', fontSize: '0.7rem', color: 'var(--text-muted)', textAlign: 'right', marginBottom: '0.2rem' }}>Filtrar itens na pizza:</span>
+                {availableCategoriesForPie.map(catId => {
+                  const isExcluded = excludedCategories.includes(catId);
+                  return (
+                    <button
+                      key={catId}
+                      onClick={() => {
+                        setExcludedCategories(prev => 
+                          isExcluded ? prev.filter(c => c !== catId) : [...prev, catId]
+                        );
+                      }}
+                      style={{
+                        padding: '0.2rem 0.6rem',
+                        fontSize: '0.65rem',
+                        borderRadius: 'var(--radius-full)',
+                        border: isExcluded ? '1px solid rgba(255,255,255,0.05)' : '1px solid var(--primary-color)',
+                        background: isExcluded ? 'transparent' : 'rgba(99, 102, 241, 0.1)',
+                        color: isExcluded ? 'var(--text-muted)' : 'var(--primary-color)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        opacity: isExcluded ? 0.5 : 1
+                      }}
+                    >
+                      {catId}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={{ width: '100%', height: 320 }}>
+            {pieData[0].value === 0 && pieData[1].value === 0 ? (
+               <div className="flex h-full items-center justify-center text-muted" style={{ fontSize: '0.9rem', textAlign: 'center' }}>
+                 Sem dados para os filtros selecionados.<br/>
+                 <small style={{ opacity: 0.6 }}>Tente reativar as categorias acima.</small>
+               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <RechartsPieChart>
+                <RechartsPieChart margin={{ top: 10, right: 60, left: 60, bottom: 10 }}>
                   <Pie
                     data={pieData}
                     cx="50%" cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
+                    innerRadius={65}
+                    outerRadius={95}
                     paddingAngle={5}
                     dataKey="value"
+                    labelLine={true}
                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                   >
                     <Cell key="cell-0" fill="#10b981" />
                     <Cell key="cell-1" fill="#ef4444" />
                   </Pie>
-                  <RechartsTooltip contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37', color: '#f8fafc' }} />
+                  <RechartsTooltip 
+                    formatter={(value) => formatCurrency(value)}
+                    contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37', color: '#f8fafc', borderRadius: '8px' }} 
+                  />
                 </RechartsPieChart>
               </ResponsiveContainer>
             )}
