@@ -1604,9 +1604,7 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-          </div>
 
-          <div className="stats-grid" style={{ marginBottom: '2rem' }}>
             <div className="glass-panel" style={{ padding: '2rem', height: '400px', borderRadius: 'var(--radius-xl)' }}>
               <h2 className="chart-title mb-8">Fluxo de Caixa Mensal</h2>
               <ResponsiveContainer width="100%" height="100%">
