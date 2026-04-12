@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useFinance } from '../contexts/FinanceContext';
 import CustomDatePicker from '../components/CustomDatePicker';
+import { logoBase64 } from '../utils/logoBase64';
 import { 
   LayoutDashboard, 
   ArrowUpRight, 
@@ -590,9 +591,15 @@ export default function Dashboard() {
     doc.rect(0, 0, pageWidth, 40, 'F');
     
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(28);
+    doc.setFontSize(26);
     doc.setTextColor(99, 102, 241); // Primary color
-    doc.text("FYNC.", 14, 25);
+    
+    try {
+      doc.addImage(logoBase64, 'PNG', 14, 11, 14, 14);
+      doc.text("Fync.", 30, 22.5);
+    } catch (e) {
+      doc.text("FYNC.", 14, 25);
+    }
     
     doc.setFont("helvetica", "normal");
     doc.setFontSize(12);
