@@ -110,7 +110,7 @@ export default function Dashboard() {
   // Subscriptions Form State
   const [subName, setSubName] = useState('');
   const [subAmount, setSubAmount] = useState('');
-  const [subCategory, setSubCategory] = useState('Lazer');
+  const [subFormCategory, setSubFormCategory] = useState('Lazer');
   const [subBillingDay, setSubBillingDay] = useState(1);
 
   // Goals Form State
@@ -284,7 +284,7 @@ export default function Dashboard() {
   const openSubModal = () => {
     setSubName('');
     setSubAmount('');
-    setSubCategory('Lazer');
+    setSubFormCategory('Lazer');
     setSubBillingDay(1);
     setIsSubModalOpen(true);
   };
@@ -297,7 +297,7 @@ export default function Dashboard() {
     const result = await addSubscription({
       name: subName,
       amount: parseFloat(subAmount),
-      category: subCategory,
+      category: subFormCategory,
       billingDay: parseInt(subBillingDay, 10)
     });
 
@@ -313,7 +313,7 @@ export default function Dashboard() {
          await addTransaction({
            title: subName,
            amount: parseFloat(subAmount),
-           category: subCategory,
+           category: subFormCategory,
            type: 'expense',
            date: txDate,
            description: 'Lançamento gerado automaticamente via Assinatura.'
@@ -2862,7 +2862,7 @@ export default function Dashboard() {
               </div>
               <div className="input-group" style={{ margin: 0 }}>
                 <label className="input-label">Categoria</label>
-                <select className="input-field" value={subCategory} onChange={e => setSubCategory(e.target.value)} required>
+                <select className="input-field" value={subFormCategory} onChange={e => setSubFormCategory(e.target.value)} required>
                    {CATEGORIES.filter(c => c.id !== 'Investimentos').map(c => (
                      <option key={c.id} value={c.id}>{c.id}</option>
                    ))}
