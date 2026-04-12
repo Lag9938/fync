@@ -129,15 +129,24 @@ export default function Dashboard() {
   const [pickerYear, setPickerYear] = useState(currentDate.getFullYear());
   const monthPickerRef = useRef(null);
 
-  // Settings State
+  // Settings & Theme State
+  const savedTheme = localStorage.getItem('fync_theme_color') || '#6366f1';
   const [settingsName, setSettingsName] = useState(currentUser?.user_metadata?.name || '');
-  const [accentColor, setAccentColor] = useState('#6366f1'); // Default Indigo
+  const [accentColor, setAccentColor] = useState(savedTheme); 
   const [settingsNewPassword, setSettingsNewPassword] = useState('');
   const [settingsConfirmPassword, setSettingsConfirmPassword] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [confirmState, setConfirmState] = useState({ isOpen: false, title: '', message: '', onConfirm: null, type: 'danger' });
+
+  // Apply Theme globally
+  useEffect(() => {
+    localStorage.setItem('fync_theme_color', accentColor);
+    document.documentElement.style.setProperty('--primary-color', accentColor);
+    document.documentElement.style.setProperty('--primary-hover', accentColor);
+    document.documentElement.style.setProperty('--primary-light', `${accentColor}1a`);
+  }, [accentColor]);
 
   const showToast = (message, type = 'success') => {
     const id = Date.now();

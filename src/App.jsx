@@ -18,6 +18,18 @@ function ProtectedRoute({ children }) {
 }
 
 function App() {
+  React.useEffect(() => {
+    // Load global theme color on app start
+    const savedColor = localStorage.getItem('fync_theme_color');
+    if (savedColor) {
+      document.documentElement.style.setProperty('--primary-color', savedColor);
+      // Rough approximation for hover state by slightly dimming
+      document.documentElement.style.setProperty('--primary-hover', savedColor);
+      // Transparent version for backgrounds
+      document.documentElement.style.setProperty('--primary-light', `${savedColor}1a`); // 10% opacity in hex
+    }
+  }, []);
+
   return (
     <AuthProvider>
       <FinanceProvider>

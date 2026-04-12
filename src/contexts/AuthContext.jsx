@@ -32,6 +32,17 @@ export function AuthProvider({ children }) {
     return { success: true };
   };
 
+  const loginWithGoogle = async () => {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin + '/dashboard',
+      }
+    });
+    if (error) return { success: false, message: error.message };
+    return { success: true };
+  };
+
   const register = async (name, email, password) => {
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -77,6 +88,7 @@ export function AuthProvider({ children }) {
   const value = {
     currentUser,
     login,
+    loginWithGoogle,
     register,
     logout,
     updateProfile,
