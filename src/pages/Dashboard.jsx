@@ -533,14 +533,34 @@ export default function Dashboard() {
   };
 
   const confirmOFXImport = async () => {
-    if (!ofxPreview) return;
+    if (!ofxPreview || ofxPreview.items.length === 0) return;
+    
+    setLoading(true);
     const items = ofxPreview.items;
     const wId = ofxPreview.walletId;
-    for (const tx of items) {
-      await addTransaction({ ...tx, walletId: wId });
+    
+    try {
+      // Importa todas as transações
+      for (const tx of items) {
+        await addTransaction({ ...tx, walletId: wId });
+      }
+
+      // Muda o filtro automaticamente para o mês da transação mais recente importada
+      const firstDate = items[0].date; // YYYY-MM-DD...
+      if (firstDate) {
+        const targetMonth = firstDate.substring(0, 7); // YYYY-MM
+        setFilterMonth(targetMonth);
+        setFilterMode('month');
+      }
+
+      setOfxPreview(null);
+      showToast(`✅ ${items.length} transações importadas com sucesso em ${new Date(items[0].date).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}.`);
+    } catch (err) {
+      console.error('Erro na importação:', err);
+      showToast('❌ Ocorreu um erro ao importar as transações.', 'error');
+    } finally {
+      setLoading(false);
     }
-    setOfxPreview(null);
-    alert(`✅ ${items.length} transações importadas com sucesso!`);
   };
 
   const handleToggleSelect = (id) => {
@@ -2355,9 +2375,10 @@ export default function Dashboard() {
                 <button 
                   className="btn btn-primary flex-1" 
                   onClick={confirmOFXImport}
-                  disabled={!ofxPreview.walletId}
+                  disabled={loading || !ofxPreview.walletId}
+                  style={{ fontWeight: 'bold' }}
                 >
-                  Confirmar Importação ({ofxPreview.items.length})
+                  {loading ? 'Processando...' : `Confirmar Importação (${ofxPreview.items.length})`}
                 </button>
               </div>
             </div>
