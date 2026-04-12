@@ -47,7 +47,8 @@ import {
   Repeat,
   Target,
   CheckCircle2,
-  Clock
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -110,6 +111,10 @@ export default function Dashboard() {
   const [b3Preview, setB3Preview] = useState(null); // { rows: [...] }
   const [b3Importing, setB3Importing] = useState(false);
   const [b3DragOver, setB3DragOver] = useState(false);
+
+  // Stock Quotes State
+  const [stockQuotes, setStockQuotes] = useState({}); // { "PETR4": 35.50 }
+  const [isQuotesLoading, setIsQuotesLoading] = useState(false);
 
   // OFX Import state
   const [ofxPreview, setOfxPreview] = useState(null); // { transactions: [...] } or null
@@ -2045,6 +2050,33 @@ export default function Dashboard() {
     setIsB3ImportOpen(false);
     alert(`\u2705 ${b3Preview.rows.length} movimenta\u00e7\u00f5es importadas com sucesso!`);
   };
+
+  const fetchStockQuotes = async (tickers) => {
+    if (!tickers || tickers.length === 0) return;
+    setIsQuotesLoading(true);
+    try {
+      const tickerList = tickers.join(',');
+      // Usando a Brapi (versão free tem limites, mas funciona para os principais ativos)
+      const response = await fetch(`https://brapi.dev/api/quote/${tickerList}`);
+      const data = await response.json();
+      
+      if (data && data.results) {
+        const newQuotes = {};
+        data.results.forEach(res => {
+          if (res.symbol && res.regularMarketPrice) {
+            newQuotes[res.symbol] = res.regularMarketPrice;
+          }
+        });
+        setStockQuotes(prev => ({ ...prev, ...newQuotes }));
+        showToast(`Cota\u00e7\u00f5es atualizadas: ${Object.keys(newQuotes).length} ativos.`);
+      }
+    } catch (err) {
+      console.error('Erro ao buscar cota\u00e7\u00f5es:', err);
+      showToast('Erro ao atualizar cota\u00e7\u00f5es. Verifique sua conex\u00e3o.', 'error');
+    } finally {
+      setIsQuotesLoading(false);
+    }
+  };
   // -------------------------
 
   const renderInvestments = () => {
@@ -2091,6 +2123,18 @@ export default function Dashboard() {
             <p className="dashboard-subtitle">Lançamentos centralizados, ativos e cálculos projetivos.</p>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button 
+              className="btn" 
+              style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-main)', border: '1px solid var(--border-color)' }} 
+              onClick={() => {
+                const tickers = portfolioList.map(p => p.ticker);
+                fetchStockQuotes(tickers);
+              }}
+              disabled={isQuotesLoading || portfolioList.length === 0}
+            >
+              <RefreshCw size={18} className={isQuotesLoading ? 'animate-spin' : ''} style={{ marginRight: '6px' }} />
+              {isQuotesLoading ? 'Atualizando...' : 'Atualizar Cotações'}
+            </button>
             <button className="btn" style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6', border: '1px solid rgba(59,130,246,0.3)' }} onClick={() => setIsB3ImportOpen(true)}>
               <FileDown size={18} /> Importar B3
             </button>
@@ -2253,7 +2297,9 @@ export default function Dashboard() {
                     <th style={{ padding: '0.75rem', textAlign: 'left' }}>Ativo</th>
                     <th style={{ padding: '0.75rem', textAlign: 'right' }}>Qtd. estimada</th>
                     <th style={{ padding: '0.75rem', textAlign: 'right' }}>Preço Médio</th>
-                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Custo Total</th>
+                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Cotação Atual</th>
+                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Patrimônio Atual</th>
+                    <th style={{ padding: '0.75rem', textAlign: 'right' }}>Rentabilidade</th>
                     <th style={{ padding: '0.75rem', textAlign: 'right' }}>Proventos</th>
                   </tr>
                 </thead>
@@ -2265,8 +2311,33 @@ export default function Dashboard() {
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>{p.quantity}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatCurrency(p.quantity > 0 ? (p.totalInvested / p.quantity) : 0)}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatCurrency(p.totalInvested)}</td>
-                      <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--success-color)' }}>{formatCurrency(p.dividends)}</td>
+                      <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '500' }}>
+                        {stockQuotes[p.ticker] ? formatCurrency(stockQuotes[p.ticker]) : <span style={{ opacity: 0.5 }}>---</span>}
+                      </td>
+                      <td style={{ padding: '0.75rem', textAlign: 'right' }}>
+                        {stockQuotes[p.ticker] 
+                          ? formatCurrency(p.quantity * stockQuotes[p.ticker]) 
+                          : formatCurrency(p.totalInvested)}
+                      </td>
+                      <td style={{ padding: '0.75rem', textAlign: 'right' }}>
+                        {stockQuotes[p.ticker] ? (() => {
+                          const avg = p.quantity > 0 ? (p.totalInvested / p.quantity) : 0;
+                          const current = stockQuotes[p.ticker];
+                          const diff = current - avg;
+                          const diffPct = avg > 0 ? (diff / avg) * 100 : 0;
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                              <span style={{ color: diff >= 0 ? 'var(--success-color)' : 'var(--danger-color)', fontWeight: 'bold' }}>
+                                {diff >= 0 ? '+' : ''}{diffPct.toFixed(2)}%
+                              </span>
+                              <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>
+                                {diff >= 0 ? '+' : ''}{formatCurrency(diff * p.quantity)}
+                              </span>
+                            </div>
+                          );
+                        })() : <span style={{ opacity: 0.5 }}>---</span>}
+                      </td>
+                      <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--success-color)', fontWeight: '500' }}>{formatCurrency(p.dividends)}</td>
                     </tr>
                   )) : (
                     <tr>
