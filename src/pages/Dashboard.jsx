@@ -2645,10 +2645,9 @@ export default function Dashboard() {
 
             {/* User Profile Dropdown */}
             <div className="relative-container">
-              <div className="user-profile" style={{ cursor: 'pointer' }} onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
+              <div className="user-profile" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }} onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
                 <div className="user-info text-right" style={{ display: 'flex', flexDirection: 'column' }}>
                   <span className="font-medium text-sm">{currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0]}</span>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Membro</span>
                 </div>
                 <div className="user-avatar" style={{ background: accentColor }}>{(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}</div>
               </div>
@@ -2663,7 +2662,7 @@ export default function Dashboard() {
                   </div>
                   <div className="dropdown-divider"></div>
                   <div className="header-dropdown-item" onClick={() => { setActiveTab('subscriptions'); setIsProfileOpen(false); }}>
-                    <Shield size={16} /> Minhas Assinaturas
+                    <Shield size={16} /> Despesas Recorrentes
                   </div>
                   <div className="dropdown-divider"></div>
                   <div className="header-dropdown-item text-danger" onClick={logout}>
