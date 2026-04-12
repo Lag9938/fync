@@ -521,6 +521,100 @@ export default function Dashboard() {
     });
   }, [filteredTransactions]);
 
+  const healthScore = useMemo(() => {
+    let score = 70; // Pontuação base
+    const { income, expense } = filteredTotals;
+
+    // 1. Razão Receita vs Despesa (Impacto Crítico)
+    if (income > 0) {
+      const savingsRate = (income - expense) / income;
+      if (savingsRate > 0.3) score += 15;
+      else if (savingsRate > 0.1) score += 5;
+      else if (savingsRate < 0) score -= 30; // Rigoroso: Gastar mais do que ganha tira muita nota
+    } else if (expense > 0) {
+      score -= 40; // Sem receita mas com despesa
+    }
+
+    // 2. Conformidade de Orçamento
+    Object.keys(budgets).forEach(cat => {
+      const limit = budgets[cat];
+      const used = dynamicCategoryData.find(d => d.name === cat)?.value || 0;
+      if (limit > 0 && used > limit) {
+        score -= 10; // Cada orçamento estourado penaliza
+      }
+    });
+
+    // 3. Investimentos (Foco no futuro)
+    const hasInvestments = filteredTransactions.some(t => t.category === 'Investimentos');
+    if (hasInvestments) score += 10;
+
+    // 4. Metas ativas
+    if (goals.length > 0) {
+      score += 5;
+      const totalProgress = goals.reduce((acc, g) => acc + (g.currentAmount / g.targetAmount), 0) / goals.length;
+      if (totalProgress > 0.5) score += 5;
+    } else {
+      score -= 10; // Falta de planejamento (metas) tira nota
+    }
+
+    return Math.max(0, Math.min(100, score));
+  }, [filteredTotals, filteredTransactions, budgets, dynamicCategoryData, goals]);
+
+  const handleExportPDF = () => {
+    const doc = new jsPDF();
+    const tableColumn = ["Data", "Título", "Categoria", "Valor", "Tipo"];
+    const tableRows = [];
+
+    const sorted = [...filteredTransactions].sort((a,b) => new Date(a.date) - new Date(b.date));
+
+    sorted.forEach(t => {
+      const transactionData = [
+        new Date(t.date).toLocaleDateString('pt-BR'),
+        t.title,
+        t.category,
+        formatCurrency(t.amount),
+        t.type === 'income' ? 'Receita' : 'Despesa'
+      ];
+      tableRows.push(transactionData);
+    });
+
+    doc.setFontSize(20);
+    doc.setTextColor(99, 102, 241);
+    doc.text("Relatório Fync", 14, 22);
+    
+    doc.setFontSize(12);
+    doc.setTextColor(100);
+    doc.text(`Período: ${getDisplaySubtitle()}`, 14, 30);
+    doc.text(`Saldo Total: ${formatCurrency(filteredTotals.balance)}`, 14, 38);
+    doc.text(`Score de Saúde: ${healthScore}/100`, 14, 46);
+
+    doc.autoTable({
+      head: [tableColumn],
+      body: tableRows,
+      startY: 55,
+      theme: 'grid',
+      headStyles: { fillColor: [99, 102, 241] }
+    });
+
+    doc.save(`relatorio_fync_${new Date().toISOString().split('T')[0]}.pdf`);
+    showToast("PDF gerado com sucesso!");
+  };
+
+  const handleExportExcel = () => {
+    const worksheet = XLSX.utils.json_to_sheet(filteredTransactions.map(t => ({
+      Data: new Date(t.date).toLocaleDateString('pt-BR'),
+      Titulo: t.title,
+      Valor: t.amount,
+      Tipo: t.type === 'income' ? 'Receita' : 'Despesa',
+      Categoria: t.category,
+      Descricao: t.description
+    })));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Transações");
+    XLSX.writeFile(workbook, `extrato_fync_${new Date().toISOString().split('T')[0]}.xlsx`);
+    showToast("Excel exportado com sucesso!");
+  };
+
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
   };
@@ -905,10 +999,20 @@ export default function Dashboard() {
           <h1 className="dashboard-title">Visão Geral</h1>
           <p className="dashboard-subtitle">Acompanhamento: <span className="text-primary font-medium">{getDisplaySubtitle()}</span></p>
         </div>
-        <button className="btn btn-primary" onClick={() => openNewTransaction('expense', 'Alimentação')}>
-          <Plus size={18} />
-          Nova Transação
-        </button>
+        <div className="flex gap-2">
+           <button className="btn btn-secondary" onClick={handleExportPDF} title="Baixar relatório PDF">
+             <FileDown size={18} />
+             PDF
+           </button>
+           <button className="btn btn-secondary" onClick={handleExportExcel} title="Baixar extrato Excel">
+             <FileDown size={18} />
+             Excel
+           </button>
+           <button className="btn btn-primary" onClick={() => openNewTransaction('expense', 'Alimentação')}>
+             <Plus size={18} />
+             Nova Transação
+           </button>
+        </div>
       </div>
       {renderInteractiveSelector()}
       <div className="stats-grid" style={{ animationDelay: '0.1s', position: 'relative', zIndex: 1 }}>
@@ -938,6 +1042,24 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="stat-value text-danger">{formatCurrency(filteredTotals.expense)}</div>
+        </div>
+        <div className="stat-card glass-panel" style={{ border: `1px solid ${healthScore > 70 ? 'rgba(16, 185, 129, 0.3)' : healthScore > 40 ? 'rgba(99, 102, 241, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
+          <div className="stat-header">
+            <span className="stat-title" style={{ color: healthScore > 70 ? 'var(--success-color)' : healthScore > 40 ? 'var(--text-main)' : 'var(--danger-color)' }}>Fync Score</span>
+            <div className="stat-icon" style={{ 
+              background: healthScore > 70 ? 'rgba(16, 185, 129, 0.1)' : healthScore > 40 ? 'rgba(99, 102, 241, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
+              color: healthScore > 70 ? 'var(--success-color)' : healthScore > 40 ? 'var(--primary-color)' : 'var(--danger-color)' 
+            }}>
+              <Activity size={20} />
+            </div>
+          </div>
+          <div className="stat-value" style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
+            {healthScore}
+            <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>/100</span>
+          </div>
+          <p className="text-xs mt-1" style={{ color: healthScore > 70 ? 'var(--success-color)' : healthScore > 40 ? 'var(--text-muted)' : 'var(--danger-color)', fontWeight: 'bold' }}>
+            {healthScore > 85 ? 'Gestão de Elite!' : healthScore > 70 ? 'Muito Bom!' : healthScore > 40 ? 'Pode melhorar' : 'Atenção Crítica'}
+          </p>
         </div>
       </div>
 
@@ -1096,10 +1218,10 @@ export default function Dashboard() {
           <button className="btn btn-secondary" onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ background: 'rgba(59, 130, 246, 0.1)', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
             <UploadCloud size={18} /> OFX
           </button>
-          <button className="btn btn-secondary" onClick={exportToPDF}>
+          <button className="btn btn-secondary" onClick={handleExportPDF}>
             <FileDown size={18} className="text-danger" /> PDF
           </button>
-          <button className="btn btn-secondary" onClick={exportToExcel}>
+          <button className="btn btn-secondary" onClick={handleExportExcel}>
             <FileDown size={18} className="text-success" /> Excel
           </button>
         </div>
@@ -1253,7 +1375,10 @@ export default function Dashboard() {
 
           <div style={{ width: '100%', height: 320 }}>
             {pieData[0].value === 0 && pieData[1].value === 0 ? (
-               <div className="flex h-full items-center justify-center text-muted" style={{ fontSize: '0.9rem', textAlign: 'center' }}>
+               <div className="flex h-full items-center justify-center flex-col text-muted" style={{ fontSize: '0.9rem', textAlign: 'center' }}>
+                 <div style={{ background: 'rgba(255,255,255,0.02)', padding: '2rem', borderRadius: '50%', marginBottom: '1rem', border: '1px dashed var(--border-color)' }}>
+                   <PieChart size={40} opacity={0.2} />
+                 </div>
                  Sem dados para os filtros selecionados.<br/>
                  <small style={{ opacity: 0.6 }}>Tente reativar as categorias acima.</small>
                </div>
@@ -1628,7 +1753,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+        <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
           <div className="stat-card glass-panel">
             <div className="stat-header">
               <span className="stat-title flex items-center gap-1">
