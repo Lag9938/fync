@@ -2655,14 +2655,14 @@ export default function Dashboard() {
 
               {isProfileOpen && (
                 <div className="header-dropdown glass-panel profile-dropdown">
-                  <div className="header-dropdown-item">
+                  <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
                     <User size={16} /> Meu Perfil
                   </div>
-                  <div className="header-dropdown-item">
+                  <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
                     <Settings size={16} /> Configurações
                   </div>
                   <div className="dropdown-divider"></div>
-                  <div className="header-dropdown-item" style={{ color: 'var(--primary-color)' }}>
+                  <div className="header-dropdown-item" style={{ color: 'var(--primary-color)' }} onClick={() => { setActiveTab('subscriptions'); setIsProfileOpen(false); }}>
                     <Shield size={16} /> Assinatura Premium
                   </div>
                   <div className="dropdown-divider"></div>
