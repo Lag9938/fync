@@ -108,6 +108,7 @@ export default function Dashboard() {
   const [settingsConfirmPassword, setSettingsConfirmPassword] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [confirmState, setConfirmState] = useState({ isOpen: false, title: '', message: '', onConfirm: null, type: 'danger' });
 
   const showToast = (message, type = 'success') => {
