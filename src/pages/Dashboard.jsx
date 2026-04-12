@@ -42,7 +42,11 @@ import {
   Calculator,
   LineChart,
   HelpCircle,
-  Menu
+  Menu,
+  Repeat,
+  Target,
+  CheckCircle2,
+  Clock
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -73,7 +77,12 @@ const INVESTMENT_CATEGORIES = [
 
 export default function Dashboard() {
   const { currentUser, logout } = useAuth();
-  const { transactions, totals, addTransaction, updateTransaction, deleteTransaction, deleteTransactions, bulkUpdateCategory, wallets, addWallet, updateWallet, deleteWallet, budgets, updateBudget } = useFinance();
+  const { 
+    transactions, totals, addTransaction, updateTransaction, deleteTransaction, deleteTransactions, bulkUpdateCategory, 
+    wallets, addWallet, updateWallet, deleteWallet, budgets, updateBudget,
+    subscriptions, addSubscription, toggleSubscription, deleteSubscription,
+    goals, addGoal, updateGoalProgress, deleteGoal 
+  } = useFinance();
   
   // Persistence Loading
   const savedTab = localStorage.getItem('fync_active_tab') || 'overview';
@@ -95,6 +104,20 @@ export default function Dashboard() {
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const [isSubModalOpen, setIsSubModalOpen] = useState(false);
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+
+  // Subscriptions Form State
+  const [subName, setSubName] = useState('');
+  const [subAmount, setSubAmount] = useState('');
+  const [subCategory, setSubCategory] = useState('Lazer');
+  const [subBillingDay, setSubBillingDay] = useState(1);
+
+  // Goals Form State
+  const [goalTitle, setGoalTitle] = useState('');
+  const [goalTarget, setGoalTarget] = useState('');
+  const [goalDeadline, setGoalDeadline] = useState('');
+  const [goalColor, setGoalColor] = useState('#6366f1');
 
   // Month & Period Filtering State
   const currentDate = new Date();
@@ -256,6 +279,79 @@ export default function Dashboard() {
         }
       }
     );
+  };
+
+  const openSubModal = () => {
+    setSubName('');
+    setSubAmount('');
+    setSubCategory('Lazer');
+    setSubBillingDay(1);
+    setIsSubModalOpen(true);
+  };
+
+  const handleAddSubscription = async (e) => {
+    e.preventDefault();
+    if (!subName || !subAmount || !subBillingDay) return;
+    
+    setLoading(true);
+    const result = await addSubscription({
+      name: subName,
+      amount: parseFloat(subAmount),
+      category: subCategory,
+      billingDay: parseInt(subBillingDay, 10)
+    });
+
+    if (result.success) {
+      showToast('Assinatura salva com sucesso!');
+      setIsSubModalOpen(false);
+
+      // Automated magic: Se a data de vencimento for hoje ou no passado neste mês, adicionar no extrato
+      const today = new Date();
+      const currentDay = today.getDate();
+      if (parseInt(subBillingDay, 10) <= currentDay) {
+         const txDate = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(subBillingDay).padStart(2,'0')}`;
+         await addTransaction({
+           title: subName,
+           amount: parseFloat(subAmount),
+           category: subCategory,
+           type: 'expense',
+           date: txDate,
+           description: 'Lançamento gerado automaticamente via Assinatura.'
+         });
+      }
+    } else {
+      showToast(result.message || 'Erro ao salvar assinatura.', 'error');
+    }
+    setLoading(false);
+  };
+
+  const openGoalModal = () => {
+    setGoalTitle('');
+    setGoalTarget('');
+    setGoalDeadline('');
+    setGoalColor('#10b981');
+    setIsGoalModalOpen(true);
+  };
+
+  const handleAddGoal = async (e) => {
+    e.preventDefault();
+    if (!goalTitle || !goalTarget) return;
+
+    setLoading(true);
+    const result = await addGoal({
+      title: goalTitle,
+      targetAmount: parseFloat(goalTarget),
+      deadline: goalDeadline || null,
+      color: goalColor
+    });
+
+    if (result.success) {
+      showToast('Meta criada com sucesso!');
+      setIsGoalModalOpen(false);
+    } else {
+      showToast(result.message || 'Erro ao criar meta.', 'error');
+    }
+    setLoading(false);
   };
 
   // Investments Calculators State
@@ -1920,7 +2016,143 @@ export default function Dashboard() {
     );
   };
 
+  const renderSubscriptions = () => {
+    return (
+      <div className="animate-fade-in">
+        <div className="dashboard-header">
+          <div>
+            <h1 className="dashboard-title">Assinaturas e Recorrências</h1>
+            <p className="dashboard-subtitle">Controle seus serviços fixos e mensais (Netflix, Spotify, Condomínio).</p>
+          </div>
+          <button className="btn btn-primary" onClick={openSubModal}><Plus size={18} /> Nova Assinatura</button>
+        </div>
 
+        <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
+          {subscriptions.length === 0 ? (
+            <div className="text-center text-muted py-8">Você ainda não castrou nenhuma assinatura.</div>
+          ) : (
+             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
+              {subscriptions.map(sub => (
+                <div key={sub.id} style={{ 
+                  background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', 
+                  borderRadius: 'var(--radius-lg)', padding: '1.5rem', position: 'relative',
+                  opacity: sub.isActive ? 1 : 0.5 
+                }}>
+                   <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '0.5rem' }}>
+                      <button className="btn-icon" onClick={() => deleteSubscription(sub.id)} title="Excluir Definitivamente"><Trash2 size={16} className="text-danger"/></button>
+                   </div>
+                   <div className="flex items-center gap-2 mb-2">
+                     <Repeat className="text-primary"/>
+                     <span className="font-bold text-lg">{sub.name}</span>
+                   </div>
+                   <div className="text-2xl font-bold font-display my-2">{formatCurrency(sub.amount)}</div>
+                   <div className="text-sm text-muted mb-4">Vencimento: Dia {sub.billingDay}</div>
+                   
+                   <button 
+                     className={`btn w-full ${sub.isActive ? 'btn-secondary' : 'btn-primary'}`} 
+                     onClick={() => toggleSubscription(sub.id, !sub.isActive)}
+                   >
+                     {sub.isActive ? 'Pausar Assinatura' : 'Reativar Assinatura'}
+                   </button>
+                </div>
+              ))}
+             </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderGoals = () => {
+    return (
+      <div className="animate-fade-in">
+        <div className="dashboard-header">
+          <div>
+            <h1 className="dashboard-title">Metas de Economia</h1>
+            <p className="dashboard-subtitle">Acompanhe o progresso dos seus sonhos e objetivos financeiros.</p>
+          </div>
+          <button className="btn btn-primary" onClick={openGoalModal}><Plus size={18} /> Nova Meta</button>
+        </div>
+
+        {goals.length === 0 ? (
+           <div className="glass-panel text-center text-muted py-12" style={{ borderRadius: 'var(--radius-xl)' }}>
+             Você ainda não tem nenhuma meta. Defina seu primeiro objetivo!
+           </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {goals.map(goal => {
+               const progress = goal.targetAmount > 0 ? (goal.currentAmount / goal.targetAmount) * 100 : 0;
+               const isComplete = progress >= 100;
+               return (
+                 <div key={goal.id} className="glass-panel" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)', position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
+                      <button className="btn-icon" onClick={() => deleteGoal(goal.id)}><Trash2 size={18} className="text-danger"/></button>
+                    </div>
+                    
+                    <div className="flex justify-between items-end mb-4">
+                      <div>
+                        <h3 className="font-bold text-xl flex items-center gap-2">
+                          <Target style={{ color: goal.color || 'var(--primary-color)' }} /> 
+                          {goal.title}
+                          {isComplete && <CheckCircle2 className="text-success" size={20} />}
+                        </h3>
+                        {goal.deadline && (
+                           <p className="text-sm text-muted mt-1 flex items-center gap-1"><Clock size={14}/> Prazo: {new Date(goal.deadline).toLocaleDateString('pt-BR')}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm text-muted">Progresso</div>
+                        <div className="text-2xl font-bold font-display" style={{ color: isComplete ? 'var(--success-color)' : 'var(--text-main)' }}>
+                          {Math.min(progress, 100).toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ width: '100%', height: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', overflow: 'hidden', marginBottom: '1rem' }}>
+                      <div style={{ 
+                        height: '100%', 
+                        width: `${Math.min(progress, 100)}%`, 
+                        background: isComplete ? 'var(--success-color)' : (goal.color || 'var(--primary-color)'),
+                        transition: 'width 0.5s ease'
+                      }} />
+                    </div>
+
+                    <div className="flex justify-between items-center bg-black/20 p-3 rounded-lg">
+                       <div>
+                         <span className="text-muted text-sm d-block">Guardado</span>
+                         <div className="font-bold">{formatCurrency(goal.currentAmount)}</div>
+                       </div>
+                       <div className="text-muted text-sm">de</div>
+                       <div className="text-right">
+                         <span className="text-muted text-sm d-block">Objetivo</span>
+                         <div className="font-bold">{formatCurrency(goal.targetAmount)}</div>
+                       </div>
+                    </div>
+                    
+                    {!isComplete && (
+                      <div className="mt-4 flex justify-end">
+                        <button 
+                          className="btn btn-secondary text-sm"
+                          onClick={() => {
+                            const add = prompt('Quanto você deseja adicionar a essa meta?');
+                            if (add && !isNaN(add)) {
+                               const newTotal = parseFloat(goal.currentAmount) + parseFloat(add);
+                               updateGoalProgress(goal.id, newTotal);
+                            }
+                          }}
+                        >
+                          + Adicionar Progresso
+                        </button>
+                      </div>
+                    )}
+                 </div>
+               );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
   const ACCENT_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6'];
 
   const renderSettings = () => {
@@ -2047,6 +2279,8 @@ export default function Dashboard() {
           <div className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => { setActiveTab('overview'); setIsSidebarOpen(false); }}><LayoutDashboard size={20} /> Visão Geral</div>
           <div className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }}><PieChart size={20} /> Relatórios</div>
           <div className={`nav-item ${activeTab === 'investments' ? 'active' : ''}`} onClick={() => { setActiveTab('investments'); setIsSidebarOpen(false); }}><TrendingUp size={20} /> Investimentos</div>
+          <div className={`nav-item ${activeTab === 'subscriptions' ? 'active' : ''}`} onClick={() => { setActiveTab('subscriptions'); setIsSidebarOpen(false); }}><Repeat size={20} /> Assinaturas</div>
+          <div className={`nav-item ${activeTab === 'goals' ? 'active' : ''}`} onClick={() => { setActiveTab('goals'); setIsSidebarOpen(false); }}><Target size={20} /> Metas</div>
           <div className={`nav-item ${activeTab === 'wallets' ? 'active' : ''}`} onClick={() => { setActiveTab('wallets'); setIsSidebarOpen(false); }}><CreditCard size={20} /> Carteiras</div>
           <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }}><Settings size={20} /> Configurações</div>
         </nav>
@@ -2083,6 +2317,8 @@ export default function Dashboard() {
           {activeTab === 'overview' && renderOverview()}
           {activeTab === 'reports' && renderReports()}
           {activeTab === 'investments' && renderInvestments()}
+          {activeTab === 'subscriptions' && renderSubscriptions()}
+          {activeTab === 'goals' && renderGoals()}
           {activeTab === 'wallets' && renderWallets()}
           {activeTab === 'settings' && renderSettings()}
         </div>
@@ -2478,6 +2714,88 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subscription Modal */}
+      {isSubModalOpen && (
+        <div className="modal-overlay animate-fade-in" style={{ zIndex: 9999 }} onClick={() => setIsSubModalOpen(false)}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="flex items-center gap-2" style={{ fontWeight: 'bold' }}><Repeat size={20} className="text-primary"/> Nova Assinatura</h2>
+              <button type="button" className="btn-icon" onClick={() => setIsSubModalOpen(false)}><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddSubscription} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Nome do Serviço (Ex: Netflix, Internet)</label>
+                <input type="text" className="input-field" value={subName} onChange={e => setSubName(e.target.value)} required />
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Valor Mensal (R$)</label>
+                <input type="number" step="0.01" className="input-field" placeholder="0.00" value={subAmount} onChange={e => setSubAmount(e.target.value)} required />
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Categoria</label>
+                <select className="input-field" value={subCategory} onChange={e => setSubCategory(e.target.value)} required>
+                   {CATEGORIES.filter(c => c.id !== 'Investimentos').map(c => (
+                     <option key={c.id} value={c.id}>{c.id}</option>
+                   ))}
+                </select>
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Dia do Vencimento Todo Mês</label>
+                <input type="number" min="1" max="31" className="input-field" value={subBillingDay} onChange={e => setSubBillingDay(e.target.value)} required />
+              </div>
+              <button type="submit" className="btn btn-primary w-full mt-4" disabled={loading}>
+                 {loading ? 'Salvando...' : 'Salvar Assinatura'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Goal Modal */}
+      {isGoalModalOpen && (
+        <div className="modal-overlay animate-fade-in" style={{ zIndex: 9999 }} onClick={() => setIsGoalModalOpen(false)}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="flex items-center gap-2" style={{ fontWeight: 'bold' }}><Target size={20} className="text-primary"/> Nova Meta de Economia</h2>
+              <button type="button" className="btn-icon" onClick={() => setIsGoalModalOpen(false)}><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddGoal} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Qual o seu objetivo? (Ex: Viagem, Carro)</label>
+                <input type="text" className="input-field" value={goalTitle} onChange={e => setGoalTitle(e.target.value)} required />
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Valor Alvo do Objetivo (R$)</label>
+                <input type="number" step="0.01" className="input-field" placeholder="10000.00" value={goalTarget} onChange={e => setGoalTarget(e.target.value)} required />
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Mês Limite / Prazo (Opcional)</label>
+                <input type="date" className="input-field" value={goalDeadline} onChange={e => setGoalDeadline(e.target.value)} />
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                 <label className="input-label">Cor Tonal da Meta</label>
+                 <div style={{ display: 'flex', gap: '0.8rem', marginTop: '0.5rem' }}>
+                   {ACCENT_COLORS.map(color => (
+                     <div 
+                       key={color} 
+                       onClick={() => setGoalColor(color)}
+                       style={{ 
+                         width: 28, height: 28, borderRadius: '50%', background: color, 
+                         cursor: 'pointer', border: goalColor === color ? '3px solid #fff' : 'none',
+                         boxShadow: goalColor === color ? `0 0 10px ${color}` : 'none'
+                       }} 
+                     />
+                   ))}
+                 </div>
+              </div>
+              <button type="submit" className="btn btn-primary w-full mt-4" disabled={loading}>
+                 {loading ? 'Criando...' : 'Criar Meta de Economia'}
+              </button>
+            </form>
           </div>
         </div>
       )}

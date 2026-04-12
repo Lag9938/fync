@@ -157,7 +157,11 @@ export default function Register() {
             className="btn-social" 
             onClick={async () => {
               setLoading(true);
-              await loginWithGoogle();
+              setError('');
+              const result = await loginWithGoogle();
+              if (result && !result.success) {
+                setError(result.message || 'Erro ao conectar com Google. Verifique o Supabase.');
+              }
               setLoading(false);
             }}
             disabled={loading}

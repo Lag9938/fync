@@ -13,6 +13,8 @@ export function FinanceProvider({ children }) {
   const [transactions, setTransactions] = useState([]);
   const [wallets, setWalletsRaw] = useState([]);
   const [budgets, setBudgets] = useState({});
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(false);
 
   // ─── Load all data ──────────────────────────────────────────
@@ -21,6 +23,8 @@ export function FinanceProvider({ children }) {
       setTransactions([]);
       setWalletsRaw([]);
       setBudgets({});
+      setSubscriptions([]);
+      setGoals([]);
       return;
     }
     setLoading(true);
@@ -62,6 +66,29 @@ export function FinanceProvider({ children }) {
         bRes.data.forEach(b => { budgetMap[b.category] = b.limit; });
         setBudgets(budgetMap);
       }
+
+      // Load Subscriptions (soft fail if table not ready)
+      try {
+        const subRes = await supabase.from('subscriptions').select('*').eq('user_id', currentUser.id);
+        if (subRes.data) {
+          setSubscriptions(subRes.data.map(s => ({
+            id: s.id, name: s.name, amount: s.amount, category: s.category, 
+            billingDay: s.billing_day, isActive: s.is_active
+          })));
+        }
+      } catch(e) { console.warn('Subscriptions table may not exist yet.'); }
+
+      // Load Goals (soft fail)
+      try {
+        const goalsRes = await supabase.from('goals').select('*').eq('user_id', currentUser.id).order('deadline', { ascending: true });
+        if (goalsRes.data) {
+          setGoals(goalsRes.data.map(g => ({
+            id: g.id, title: g.title, targetAmount: g.target_amount, 
+            currentAmount: g.current_amount, deadline: g.deadline, color: g.color
+          })));
+        }
+      } catch(e) { console.warn('Goals table may not exist yet.'); }
+
     } catch (err) {
       console.error('Error loading data:', err);
     }
@@ -212,6 +239,78 @@ export function FinanceProvider({ children }) {
     setBudgets(prev => ({ ...prev, [category]: limit }));
   };
 
+  // ─── Subscriptions ──────────────────────────────────────────
+  const addSubscription = async (sub) => {
+    if (!currentUser) return { success: false };
+    const { data, error } = await supabase.from('subscriptions').insert([{
+      user_id: currentUser.id,
+      name: sub.name,
+      amount: sub.amount,
+      category: sub.category,
+      billing_day: sub.billingDay,
+      is_active: sub.isActive !== undefined ? sub.isActive : true
+    }]).select().single();
+
+    if (!error && data) {
+      setSubscriptions(prev => [...prev, {
+        id: data.id, name: data.name, amount: data.amount, category: data.category, 
+        billingDay: data.billing_day, isActive: data.is_active
+      }]);
+      return { success: true, data };
+    }
+    return { success: false, message: error?.message };
+  };
+
+  const toggleSubscription = async (id, isActive) => {
+    const { error } = await supabase.from('subscriptions').update({ is_active: isActive }).eq('id', id);
+    if (!error) {
+      setSubscriptions(prev => prev.map(s => s.id === id ? { ...s, isActive } : s));
+    }
+  };
+
+  const deleteSubscription = async (id) => {
+    const { error } = await supabase.from('subscriptions').delete().eq('id', id);
+    if (!error) {
+      setSubscriptions(prev => prev.filter(s => s.id !== id));
+    }
+  };
+
+  // ─── Goals ──────────────────────────────────────────────────
+  const addGoal = async (goal) => {
+    if (!currentUser) return { success: false };
+    const { data, error } = await supabase.from('goals').insert([{
+      user_id: currentUser.id,
+      title: goal.title,
+      target_amount: goal.targetAmount,
+      current_amount: goal.currentAmount || 0,
+      deadline: goal.deadline || null,
+      color: goal.color || '#6366f1'
+    }]).select().single();
+
+    if (!error && data) {
+      setGoals(prev => [...prev, {
+        id: data.id, title: data.title, targetAmount: data.target_amount, 
+        currentAmount: data.current_amount, deadline: data.deadline, color: data.color
+      }]);
+      return { success: true, data };
+    }
+    return { success: false, message: error?.message };
+  };
+
+  const updateGoalProgress = async (id, newAmount) => {
+    const { error } = await supabase.from('goals').update({ current_amount: newAmount }).eq('id', id);
+    if (!error) {
+      setGoals(prev => prev.map(g => g.id === id ? { ...g, currentAmount: newAmount } : g));
+    }
+  };
+
+  const deleteGoal = async (id) => {
+    const { error } = await supabase.from('goals').delete().eq('id', id);
+    if (!error) {
+      setGoals(prev => prev.filter(g => g.id !== id));
+    }
+  };
+
   // ─── Derived state ──────────────────────────────────────────
   const totals = transactions.reduce((acc, curr) => {
     const amount = parseFloat(curr.amount) || 0;
@@ -245,6 +344,14 @@ export function FinanceProvider({ children }) {
     deleteWallet,
     budgets,
     updateBudget,
+    subscriptions,
+    addSubscription,
+    toggleSubscription,
+    deleteSubscription,
+    goals,
+    addGoal,
+    updateGoalProgress,
+    deleteGoal,
     loading,
     refreshData: loadData,
   };
