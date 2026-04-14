@@ -268,6 +268,27 @@ export function FinanceProvider({ children }) {
     }
   };
 
+  const updateSubscription = async (id, updates) => {
+    if (!currentUser) return { success: false };
+    const { data, error } = await supabase.from('subscriptions').update({
+      name: updates.name,
+      amount: updates.amount,
+      category: updates.category,
+      billing_day: updates.billingDay,
+    }).eq('id', id).select().single();
+    if (!error && data) {
+      setSubscriptions(prev => prev.map(s => s.id === id ? {
+        ...s,
+        name: data.name,
+        amount: data.amount,
+        category: data.category,
+        billingDay: data.billing_day,
+      } : s));
+      return { success: true };
+    }
+    return { success: false, message: error?.message };
+  };
+
   const deleteSubscription = async (id) => {
     const { error } = await supabase.from('subscriptions').delete().eq('id', id);
     if (!error) {
@@ -347,6 +368,7 @@ export function FinanceProvider({ children }) {
     subscriptions,
     addSubscription,
     toggleSubscription,
+    updateSubscription,
     deleteSubscription,
     goals,
     addGoal,

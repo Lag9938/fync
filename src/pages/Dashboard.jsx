@@ -50,13 +50,16 @@ import {
   Clock,
   RefreshCw,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Sparkles
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { parseOFX } from '../utils/ofxParser';
+import { predictCategory } from '../utils/smartCategory';
+import AiAssistant from '../components/AiAssistant';
 import './Dashboard.css';
 
 const CATEGORIES = [
@@ -84,7 +87,7 @@ export default function Dashboard() {
   const { 
     transactions, totals, addTransaction, updateTransaction, deleteTransaction, deleteTransactions, bulkUpdateCategory, 
     wallets, addWallet, updateWallet, deleteWallet, budgets, updateBudget,
-    subscriptions, addSubscription, toggleSubscription, deleteSubscription,
+    subscriptions, addSubscription, toggleSubscription, updateSubscription, deleteSubscription,
     goals, addGoal, updateGoalProgress, deleteGoal 
   } = useFinance();
   
@@ -131,12 +134,31 @@ export default function Dashboard() {
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [isSubModalOpen, setIsSubModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isGoalProgressModalOpen, setIsGoalProgressModalOpen] = useState(false);
+  const [goalProgressTarget, setGoalProgressTarget] = useState(null);
+  const [goalProgressAmount, setGoalProgressAmount] = useState('');
+  const [goalProgressWalletId, setGoalProgressWalletId] = useState('');
+
+  // Asset Adjustment Modal State
+  const [isAssetAdjustmentModalOpen, setIsAssetAdjustmentModalOpen] = useState(false);
+  const [assetAdjustTarget, setAssetAdjustTarget] = useState(null);
+  const [assetAdjustQty, setAssetAdjustQty] = useState('');
+  const [assetAdjustAvgPrice, setAssetAdjustAvgPrice] = useState('');
+
 
   // Subscriptions Form State
   const [subName, setSubName] = useState('');
   const [subAmount, setSubAmount] = useState('');
   const [subFormCategory, setSubFormCategory] = useState('Lazer');
   const [subBillingDay, setSubBillingDay] = useState(1);
+
+  // Edit Subscription State
+  const [isEditSubModalOpen, setIsEditSubModalOpen] = useState(false);
+  const [editSubTarget, setEditSubTarget] = useState(null);
+  const [editSubName, setEditSubName] = useState('');
+  const [editSubAmount, setEditSubAmount] = useState('');
+  const [editSubCategory, setEditSubCategory] = useState('Lazer');
+  const [editSubBillingDay, setEditSubBillingDay] = useState(1);
 
   // Goals Form State
   const [goalTitle, setGoalTitle] = useState('');
@@ -234,6 +256,16 @@ export default function Dashboard() {
   const [selectedWalletId, setSelectedWalletId] = useState('');
   const [ticker, setTicker] = useState('');
   const [keepModalOpen, setKeepModalOpen] = useState(false);
+
+  // Smart Categorization: Auto-suggest category based on title typing
+  useEffect(() => {
+    if (isModalOpen && !editingTransactionId && title.length >= 3) {
+      const suggested = predictCategory(title, transactions);
+      if (suggested && suggested !== category) {
+        setCategory(suggested);
+      }
+    }
+  }, [title, isModalOpen, editingTransactionId, transactions]);
 
   // Wallet State
   const [editingWalletId, setEditingWalletId] = useState(null);
@@ -379,6 +411,83 @@ export default function Dashboard() {
     setLoading(false);
   };
 
+  const handleAddGoalProgress = async (e) => {
+    e.preventDefault();
+    if (!goalProgressTarget || !goalProgressAmount) return;
+
+    setLoading(true);
+    const amountVal = parseFloat(goalProgressAmount);
+    const newTotal = parseFloat(goalProgressTarget.currentAmount) + amountVal;
+    
+    // 1. Atualizar limite da meta
+    const goalRes = await updateGoalProgress(goalProgressTarget.id, newTotal);
+    
+    if (goalRes.success) {
+      // 2. Gerar a transação
+      const txRes = await addTransaction({
+        title: `Aporte em Meta: ${goalProgressTarget.title}`,
+        amount: amountVal,
+        type: 'expense',
+        category: 'Investimentos',
+        date: new Date().toISOString().split('T')[0],
+        walletId: goalProgressWalletId || null,
+        description: 'Aporte reservado da carteira para a meta de economia.'
+      });
+      
+      if (txRes.success) {
+        showToast('Progresso adicionado e transação gerada com sucesso!');
+        setIsGoalProgressModalOpen(false);
+      } else {
+        showToast('Progresso salvo, mas erro ao gerar transação: ' + txRes.message, 'error');
+      }
+    } else {
+      showToast('Erro ao atualizar meta.', 'error');
+    }
+    setLoading(false);
+  };
+
+  const handleAssetAdjustment = async (e) => {
+    e.preventDefault();
+    if (!assetAdjustTarget || assetAdjustQty === '' || assetAdjustAvgPrice === '') return;
+    setLoading(true);
+    const newQty = parseInt(assetAdjustQty, 10);
+    const newAvgPrice = parseFloat(assetAdjustAvgPrice);
+    const newTotalInvested = newQty * newAvgPrice;
+    const diffInvested = newTotalInvested - assetAdjustTarget.totalInvested;
+    const diffQty = newQty - assetAdjustTarget.quantity;
+
+    if (diffInvested === 0 && diffQty === 0) {
+      setIsAssetAdjustmentModalOpen(false);
+      setLoading(false);
+      return;
+    }
+
+    const txType = diffInvested >= 0 ? 'expense' : 'income';
+    const txAmount = Math.abs(diffInvested) || 0.01;
+    const qtyAbs = Math.abs(diffQty);
+    const txTitle = `Ajuste Contábil ${assetAdjustTarget.ticker}${qtyAbs > 0 ? ` (${qtyAbs} cotas)` : ''}`;
+
+    try {
+      const res = await addTransaction({
+        title: txTitle,
+        amount: txAmount,
+        type: txType,
+        category: 'Investimentos',
+        subCategory: 'Ações B3',
+        ticker: assetAdjustTarget.ticker,
+        date: new Date().toISOString().split('T')[0],
+        walletId: wallets[0]?.id || null,
+        description: 'Lançamento gerencial automático para corrigir Preço Médio e/ou Quantidade.'
+      });
+      if (res?.success === false) throw new Error(res.message);
+      showToast(`✅ Posição de ${assetAdjustTarget.ticker} ajustada com sucesso!`);
+      setIsAssetAdjustmentModalOpen(false);
+    } catch(err) {
+      showToast('Erro ao ajustar ativo: ' + (err.message || 'Erro desconhecido'), 'error');
+    }
+    setLoading(false);
+  };
+
   // Investments Calculators State
   const [grahamVpa, setGrahamVpa] = useState('');
   const [grahamLpa, setGrahamLpa] = useState('');
@@ -451,10 +560,9 @@ export default function Dashboard() {
 
   // Filtering Data
   const filteredTransactions = useMemo(() => {
-    return (transactions || []).filter(t => {
+    const baseTxs = (transactions || []).filter(t => {
       if (!t || !t.date) return false;
       
-      // Global Text Search
       if (searchTerm) {
         const query = searchTerm.toLowerCase();
         const matchesTitle = t.title?.toLowerCase().includes(query);
@@ -464,7 +572,6 @@ export default function Dashboard() {
       }
 
       const tIso = String(t.date);
-      
       if (filterMode === 'month') {
         const targetMonth = filterMonth || initialMonth;
         return tIso.startsWith(targetMonth);
@@ -475,7 +582,63 @@ export default function Dashboard() {
         return tDate >= startObj && tDate <= endObj;
       }
     });
-  }, [transactions, filterMonth, filterMode, filterStartDate, filterEndDate, searchTerm]);
+
+    // Injetar Assinaturas como lançamentos virtuais (Projeção)
+    if (subscriptions && subscriptions.length > 0) {
+      let projectedSubs = [];
+      
+      if (filterMode === 'month') {
+        const [year, month] = (filterMonth || initialMonth).split('-').map(Number);
+        projectedSubs = subscriptions.filter(s => s.isActive).map(s => ({
+          id: `sub-v-${s.id}`,
+          title: s.name,
+          amount: s.amount,
+          type: 'expense',
+          category: s.category || 'Outros',
+          date: `${year}-${String(month).padStart(2, '0')}-${String(s.billingDay).padStart(2, '0')}`,
+          isProjected: true,
+          description: 'Assinatura recorrente (Projeção)'
+        }));
+      } else {
+        const startD = filterStartDate ? new Date(filterStartDate + 'T00:00:00') : new Date('2000-01-01T00:00:00');
+        const endD = filterEndDate ? new Date(filterEndDate + 'T23:59:59') : new Date('2100-01-01T23:59:59');
+        
+        subscriptions.filter(s => s.isActive).forEach(s => {
+          let currentIter = new Date(startD.getFullYear(), startD.getMonth(), 1);
+          const endIter = new Date(endD.getFullYear(), endD.getMonth(), 1);
+          
+          while(currentIter <= endIter) {
+            const projDateStr = `${currentIter.getFullYear()}-${String(currentIter.getMonth()+1).padStart(2, '0')}-${String(s.billingDay).padStart(2, '0')}`;
+            const projDateObj = new Date(projDateStr + 'T12:00:00');
+            if (projDateObj >= startD && projDateObj <= endD) {
+              projectedSubs.push({
+                id: `sub-v-${s.id}-${projDateStr}`,
+                title: s.name,
+                amount: s.amount,
+                type: 'expense',
+                category: s.category || 'Outros',
+                date: projDateStr,
+                isProjected: true,
+                description: 'Assinatura recorrente (Projeção)'
+              });
+            }
+            currentIter.setMonth(currentIter.getMonth() + 1);
+          }
+        });
+      }
+
+      // Evitar duplicidade exata
+      const finalSubs = projectedSubs.filter(p => !baseTxs.some(t => 
+        t.title === p.title && 
+        parseFloat(t.amount) === parseFloat(p.amount) && 
+        t.date === p.date
+      ));
+
+      return [...baseTxs, ...finalSubs];
+    }
+
+    return baseTxs;
+  }, [transactions, filterMonth, filterMode, filterStartDate, filterEndDate, searchTerm, initialMonth, subscriptions]);
 
   const memoizedSortedTransactions = useMemo(() => {
     try {
@@ -899,7 +1062,10 @@ export default function Dashboard() {
         return;
       }
       setOfxPreview({ 
-        items: extracted.map(item => ({ ...item, category: 'Outros' })), 
+        items: extracted.map(item => ({ 
+          ...item, 
+          category: predictCategory(item.title, transactions) || 'Outros' 
+        })), 
         walletId: wallets.length > 0 ? wallets[0].id : '' 
       });
     };
@@ -1207,202 +1373,232 @@ export default function Dashboard() {
     </div>
   );
 
-  const renderOverview = () => (
-    <div className="animate-fade-in">
-      <div className="dashboard-header">
-        <div>
-          <h1 className="dashboard-title">Visão Geral</h1>
-          <p className="dashboard-subtitle">Acompanhamento: <span className="text-primary font-medium">{getDisplaySubtitle()}</span></p>
+  // --- Shared Reusable Transaction Table ---
+  const renderMainTransactionTable = () => (
+    <div 
+      className={`glass-panel ${isTxFullscreen ? 'immersive-tx-view' : ''}`} 
+      style={!isTxFullscreen ? { padding: '1.5rem', borderRadius: 'var(--radius-xl)', marginTop: '1.5rem' } : {}}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <h2 className="chart-title" style={{ margin: 0 }}>Histórico de Lançamentos ({filteredTransactions.length})</h2>
+          {selectedIds.length > 0 && (
+            <span className="badge" style={{ backgroundColor: 'var(--primary-color)', color: 'white', padding: '4px 12px', borderRadius: '20px', fontSize: '0.8rem' }}>
+              {selectedIds.length} selecionados
+            </span>
+          )}
         </div>
-        <div className="flex gap-2">
-           <button className="btn btn-secondary" onClick={handleExportPDF} title="Baixar relatório PDF">
-             <FileDown size={18} className="text-danger" /> PDF
-           </button>
-           <button className="btn btn-secondary" onClick={handleExportExcel} title="Baixar extrato Excel">
-             <FileDown size={18} className="text-success" /> Excel
-           </button>
-           <button className="btn btn-primary" onClick={() => openNewTransaction('expense', 'Alimentação')}>
-             <Plus size={18} /> Nova Transação
-           </button>
-        </div>
-      </div>
-      {renderInteractiveSelector()}
-      <div className="stats-grid" style={{ animationDelay: '0.1s', position: 'relative', zIndex: 50 }}>
-        <div className="stat-card glass-panel">
-          <div className="stat-header">
-            <span className="stat-title">Saldo no Período</span>
-            <div className="stat-icon" style={{ background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary-color)' }}>
-              <Wallet size={20} />
+        
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {selectedIds.length > 0 && (
+            <div style={{ display: 'flex', gap: '0.4rem', marginRight: '1rem' }}>
+              <select 
+                className="input-field" 
+                style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
+                onChange={(e) => handleBulkCategoryUpdate(e.target.value)}
+                defaultValue=""
+              >
+                <option value="" disabled>📁 Trocar Categoria...</option>
+                {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+              </select>
+              <button className="btn-icon text-danger" onClick={handleBulkDelete} title="Excluir Selecionados">
+                <Trash2 size={20} />
+              </button>
             </div>
-          </div>
-          <div className="stat-value">{formatCurrency(filteredTotals.balance)}</div>
-        </div>
-        <div className="stat-card glass-panel">
-          <div className="stat-header">
-            <span className="stat-title text-success">Receitas</span>
-            <div className="stat-icon" style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success-color)' }}>
-              <ArrowUpRight size={20} />
-            </div>
-          </div>
-          <div className="stat-value text-success">{formatCurrency(filteredTotals.income)}</div>
-        </div>
-        <div className="stat-card glass-panel">
-          <div className="stat-header">
-            <span className="stat-title text-danger">Despesas</span>
-            <div className="stat-icon" style={{ background: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger-color)' }}>
-              <ArrowDownRight size={20} />
-            </div>
-          </div>
-          <div className="stat-value text-danger">{formatCurrency(filteredTotals.expense)}</div>
-        </div>
-        <div className="stat-card glass-panel fync-score-container" style={{ overflow: 'visible', border: `1px solid ${healthScore > 70 ? 'rgba(16, 185, 129, 0.3)' : healthScore > 40 ? 'rgba(99, 102, 241, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
-          <div className="stat-header">
-            <span className="stat-title" style={{ color: healthScore > 70 ? 'var(--success-color)' : healthScore > 40 ? 'var(--text-main)' : 'var(--danger-color)' }}>Fync Score</span>
-            <div className="stat-icon" style={{ 
-              background: healthScore > 70 ? 'rgba(16, 185, 129, 0.1)' : healthScore > 40 ? 'rgba(99, 102, 241, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
-              color: healthScore > 70 ? 'var(--success-color)' : healthScore > 40 ? 'var(--primary-color)' : 'var(--danger-color)' 
-            }}>
-              <Activity size={20} />
-            </div>
-          </div>
-          <div className="stat-value" style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
-            {healthScore}
-            <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>/100</span>
-          </div>
-          <p className="text-xs mt-1" style={{ color: healthScore > 70 ? 'var(--success-color)' : healthScore > 40 ? 'var(--text-muted)' : 'var(--danger-color)', fontWeight: 'bold' }}>
-            {healthScore > 85 ? 'Gestão de Elite!' : healthScore > 70 ? 'Muito Bom!' : healthScore > 40 ? 'Pode melhorar' : 'Atenção Crítica'}
-          </p>
+          )}
 
-          <div className="fync-score-tooltip glass-panel">
-            <div className="score-tooltip-title">Como calculamos?</div>
-            <ul className="score-tooltip-list">
-              <li><span className="score-good">+</span> Economia maior que despesas</li>
-              <li><span className="score-good">+</span> Metas & Investimentos ativos</li>
-              <li><span className="score-bad">-</span> Gastar mais que recebe</li>
-              <li><span className="score-bad">-</span> Limites do orçamento estourados</li>
-            </ul>
-          </div>
+          <button 
+            className="btn-icon" 
+            onClick={() => {
+              const allIds = filteredTransactions.map(t => t.id);
+              if (selectedIds.length === allIds.length) setSelectedIds([]);
+              else setSelectedIds(allIds);
+            }}
+            title="Selecionar Tudo"
+            style={{ color: selectedIds.length > 0 && selectedIds.length === filteredTransactions.length ? 'var(--primary-color)' : 'inherit' }}
+          >
+            <CheckCircle2 size={22} />
+          </button>
+
+          <button className="btn-icon" onClick={() => setIsTxFullscreen(!isTxFullscreen)} title="Alternar Tela Cheia">
+            {isTxFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
+          </button>
         </div>
       </div>
 
-      {Object.keys(budgets).some(catId => {
-        const limit = budgets[catId] || 0;
-        const used = dynamicCategoryData.find(d => d.name === catId)?.value || 0;
-        return limit > 0 && (used / limit) >= 0.8;
-      }) && (
-        <div className="glass-panel animate-fade-in" style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.05)', borderRadius: 'var(--radius-lg)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--danger-color)', marginBottom: '0.5rem' }}>
-            <Bell size={20} />
-            <span className="font-bold">Atenção: Limite de Orçamento</span>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
-            {Object.keys(budgets).map(catId => {
-              const limit = budgets[catId] || 0;
-              const used = dynamicCategoryData.find(d => d.name === catId)?.value || 0;
-              const progress = limit > 0 ? (used / limit) * 100 : 0;
-              if (limit === 0 || progress < 80) return null;
-              
-              return (
-                <div key={catId} style={{ fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span className="font-medium text-main">{catId}:</span>
-                  <span style={{ color: progress >= 100 ? 'var(--danger-color)' : '#f59e0b', fontWeight: 'bold' }}>
-                    {progress >= 100 ? 'Estourado!' : `${progress.toFixed(0)}% usado`}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      <div className="charts-section" style={{ animationDelay: '0.2s', marginTop: '2rem', position: 'relative', zIndex: 1 }}>
-        <div className="chart-card glass-panel">
-          <h2 className="chart-title">Fluxo de Caixa</h2>
-          <div style={{ width: '100%', height: 300 }}>
-            {dynamicFlowData.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-muted">Sem dados no período para montar o gráfico.</div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={dynamicFlowData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorPv" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.8}/>
-                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#272a37" vertical={false} />
-                  <XAxis dataKey="name" stroke="#94a3b8" tick={{ fill: '#94a3b8' }} />
-                  <YAxis stroke="#94a3b8" tick={{ fill: '#94a3b8' }} tickFormatter={(value) => `R$${value}`} />
-                  <RechartsTooltip contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37', color: '#f8fafc' }} />
-                  <Area type="monotone" dataKey="Receitas" stroke="#10b981" fillOpacity={1} fill="url(#colorUv)" />
-                  <Area type="monotone" dataKey="Despesas" stroke="#ef4444" fillOpacity={1} fill="url(#colorPv)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-        <div className="transactions-section glass-panel">
-          <div className="transactions-header">
-            <h2>Lançamentos Recentes ({filteredTransactions.length})</h2>
-          </div>
-          <div className="transaction-list" style={{ maxHeight: '350px', overflowY: 'auto', paddingRight: '0.5rem' }}>
-            {filteredTransactions.length === 0 ? (
-              <div className="text-center text-muted" style={{ padding: '2rem 0' }}>
-                Nenhuma transação encontrada no período.
-              </div>
-            ) : (
-              filteredTransactions.slice(0, 15).map(t => {
-                const tDateStr = t && t.date ? String(t.date) : '';
-                const isoDatePart = tDateStr.includes('T') ? tDateStr.split('T')[0] : tDateStr;
-                const dateParts = isoDatePart.split('-');
-                const y = dateParts[0] || '';
-                const m = dateParts[1] || '';
-                const d = dateParts[2] || '';
-                const wName = wallets.find(w => w.id === t.walletId)?.name || 'N/A';
-                
-                return (
-                  <div key={t.id} className="transaction-item">
-                    <div className="transaction-info">
-                      <div className="transaction-icon" style={{ 
-                        background: t.type === 'income' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                        color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)'
-                      }}>
-                        {t.type === 'income' ? <ArrowUpRight size={24} /> : <ArrowDownRight size={24} />}
-                      </div>
-                      <div className="transaction-details">
-                        <span className="transaction-title">{t.title}</span>
-                        <span className="transaction-date">
-                          {d && m && y ? (
-                             <strong style={{ color: 'var(--text-main)' }}>{`${d}/${m}/${y}`}</strong> 
-                          ) : (
-                             <strong style={{ color: 'var(--text-main)' }}>Sem Data</strong>
-                          )}
-                          {' '}• {t.category} ({wName})
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`transaction-amount ${t.type === 'income' ? 'amount-positive' : 'amount-negative'}`} style={{ marginRight: '1rem' }}>
-                        {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
+      <div style={{ overflowY: 'auto', overflowX: 'auto', flex: 1, maxHeight: isTxFullscreen ? 'none' : '450px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+              <th style={{ padding: '1rem', width: '40px' }}></th>
+              <th style={{ padding: '1rem', textAlign: 'left' }}>Data</th>
+              <th style={{ padding: '1rem', textAlign: 'left' }}>Descrição</th>
+              <th style={{ padding: '1rem', textAlign: 'left' }}>Conta</th>
+              <th style={{ padding: '1rem', textAlign: 'left' }}>Categoria</th>
+              <th style={{ padding: '1rem', textAlign: 'right' }}>Valor</th>
+              <th style={{ padding: '1rem', textAlign: 'right' }}>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(isTxFullscreen ? filteredTransactions : filteredTransactions.slice(0, 50)).map(t => (
+              <tr 
+                key={t.id} 
+                className="tx-row-clickable"
+                onClick={(e) => {
+                  // Don't toggle if clicking an action button or the checkbox itself (already handled by checkbox)
+                  if (e.target.closest('button') || e.target.type === 'checkbox') return;
+                  setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id]);
+                }}
+                style={{ 
+                  borderBottom: '1px solid var(--border-color)', 
+                  background: selectedIds.includes(t.id) ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <td style={{ padding: '1rem' }}>
+                  <input 
+                    type="checkbox" 
+                    style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
+                    checked={selectedIds.includes(t.id)} 
+                    onChange={() => setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id])} 
+                  />
+                </td>
+                <td style={{ padding: '1rem', whiteSpace: 'nowrap', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                  {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Sem Data'}
+                </td>
+                <td style={{ padding: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{t.title}</div>
+                    {t.isProjected && (
+                      <span style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary-color)', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Previsto
                       </span>
-                      <button className="btn-icon" onClick={() => openEditTransaction(t)} title="Editar">
-                        <Edit2 size={16} />
-                      </button>
-                      <button className="btn-icon" onClick={() => deleteTransaction(t.id)} title="Excluir">
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
+                    )}
                   </div>
-                )
-              })
-            )}
-          </div>
-        </div>
+                </td>
+                <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  {wallets.find(w => w.id === t.walletId)?.name || 'N/A'}
+                </td>
+                <td style={{ padding: '1rem' }}>
+                  <span className="category-tag">{t.category}</span>
+                </td>
+                <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 700, color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                  {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
+                </td>
+                <td style={{ padding: '1rem', textAlign: 'right' }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                    <button className="btn-icon" onClick={() => openEditTransaction(t)}><Edit2 size={16} /></button>
+                    <button className="btn-icon" onClick={() => deleteTransaction(t.id)}><Trash2 size={16} /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filteredTransactions.length === 0 && (
+          <div className="text-center text-muted" style={{ padding: '3rem' }}>Nenhum lançamento encontrado.</div>
+        )}
       </div>
+    </div>
+  );
+
+  const renderOverview = () => (
+    <div className={`animate-fade-in ${isTxFullscreen ? 'tx-fullscreen-view' : ''}`}>
+      {!isTxFullscreen && (
+        <>
+          <div className="dashboard-header">
+            <div>
+              <h1 className="dashboard-title">Visão Geral</h1>
+              <p className="dashboard-subtitle">Acompanhamento: <span className="text-primary font-medium">{getDisplaySubtitle()}</span></p>
+            </div>
+            <div className="flex gap-2">
+               <button className="btn btn-secondary" onClick={handleExportPDF}>
+                 <FileDown size={18} className="text-danger" /> PDF
+               </button>
+               <button className="btn btn-secondary" onClick={handleExportExcel}>
+                 <FileDown size={18} className="text-success" /> Excel
+               </button>
+               <button className="btn btn-primary" onClick={() => openNewTransaction('expense')}>
+                 <Plus size={18} /> Nova Transação
+               </button>
+            </div>
+          </div>
+          
+          {renderInteractiveSelector()}
+
+          <div className="stats-grid" style={{ marginBottom: '2rem' }}>
+            <div className="stat-card glass-panel">
+              <div className="stat-header">
+                <span className="stat-title">Saldo no Período</span>
+                <div className="stat-icon" style={{ background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary-color)' }}><Wallet size={20} /></div>
+              </div>
+              <div className="stat-value">{formatCurrency(filteredTotals.balance)}</div>
+            </div>
+            <div className="stat-card glass-panel">
+              <div className="stat-header">
+                <span className="stat-title text-success">Receitas</span>
+                <div className="stat-icon" style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success-color)' }}><ArrowUpRight size={20} /></div>
+              </div>
+              <div className="stat-value text-success">+{formatCurrency(filteredTotals.income)}</div>
+            </div>
+            <div className="stat-card glass-panel">
+              <div className="stat-header">
+                <span className="stat-title text-danger">Despesas</span>
+                <div className="stat-icon" style={{ background: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger-color)' }}><ArrowDownRight size={20} /></div>
+              </div>
+              <div className="stat-value text-danger">-{formatCurrency(filteredTotals.expense)}</div>
+            </div>
+            <div className="stat-card glass-panel" style={{ border: `1px solid ${healthScore > 70 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(99, 102, 241, 0.3)'}` }}>
+              <div className="stat-header">
+                <span className="stat-title">Fync Score</span>
+                <div className="stat-icon" style={{ background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary-color)' }}><Activity size={20} /></div>
+              </div>
+              <div className="stat-value">{healthScore} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>/100</span></div>
+              <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: healthScore > 70 ? 'var(--success-color)' : 'var(--primary-color)' }}>
+                {healthScore > 85 ? 'Gestão de Elite!' : healthScore > 70 ? 'Muito Bom!' : 'Pode melhorar'}
+              </div>
+            </div>
+          </div>
+
+          <div className="charts-section" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            <div className="glass-panel" style={{ padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}>
+              <h2 className="chart-title">Fluxo de Caixa Mensal</h2>
+              <div style={{ width: '100%', height: 320 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={dynamicFlowData}>
+                    <defs>
+                      <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient>
+                      <linearGradient id="colorPv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0}/></linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#272a37" vertical={false} />
+                    <XAxis dataKey="name" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" tickFormatter={(v) => `R$${v}`} />
+                    <RechartsTooltip contentStyle={{ backgroundColor: '#171923', border: 'none' }} />
+                    <Area type="monotone" dataKey="Receitas" stroke="#10b981" fillOpacity={1} fill="url(#colorUv)" />
+                    <Area type="monotone" dataKey="Despesas" stroke="#ef4444" fillOpacity={1} fill="url(#colorPv)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="glass-panel" style={{ padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}>
+              <h2 className="chart-title">Distribuição de Gastos</h2>
+              <div style={{ width: '100%', height: 320 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsPieChart>
+                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value">
+                      <Cell key="cell-0" fill="#10b981" />
+                      <Cell key="cell-1" fill="#ef4444" />
+                    </Pie>
+                    <RechartsTooltip formatter={(v) => formatCurrency(v)} contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37' }} />
+                  </RechartsPieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+      {renderMainTransactionTable()}
     </div>
   );
 
@@ -1422,322 +1618,242 @@ export default function Dashboard() {
       { name: 'Despesas', value: totals.expense }
     ];
   }, [filteredTransactions, excludedCategories]);
-
-  const availableCategoriesForPie = useMemo(() => {
-    const cats = new Set(filteredTransactions.map(t => t.category));
-    return Array.from(cats);
-  }, [filteredTransactions]);
-
   const renderReports = () => (
-    <div className="animate-fade-in">
-      <div className="dashboard-header">
-        <div>
-          <h1 className="dashboard-title">Relatórios Detalhados</h1>
-          <p className="dashboard-subtitle">Análise Financeira Completa e Leitura OFX.</p>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".ofx" style={{ display: 'none' }} />
-          <button className="btn btn-secondary" onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ background: 'rgba(59, 130, 246, 0.1)', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
-            <UploadCloud size={18} /> OFX
-          </button>
-          <button className="btn btn-secondary" onClick={handleExportPDF}>
-            <FileDown size={18} className="text-danger" /> PDF
-          </button>
-          <button className="btn btn-secondary" onClick={handleExportExcel}>
-            <FileDown size={18} className="text-success" /> Excel
-          </button>
-        </div>
-      </div>
-      
-      {renderInteractiveSelector()}
-
-      <div className="glass-panel" style={{ marginBottom: '2rem', padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}>
-        <h2 className="chart-title mb-4" style={{ display:'flex', alignItems:'center', gap:'0.5rem' }}>
-          <Activity size={20} style={{ color: 'var(--primary-color)' }} />
-          Orçamento Mensal — Travas de Gastos
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' }}>
-          {CATEGORIES.map(cat => {
-            if (cat.id === 'Investimentos' || cat.id === 'Outros') return null;
-            const limit = budgets[cat.id] || 0;
-            const usedRaw = dynamicCategoryData.find(d => d.name === cat.id)?.value || 0;
-            const progress = limit > 0 ? (usedRaw / limit) * 100 : 0;
-            const isEditing = editingBudgetFor === cat.id;
-            const isOver = limit > 0 && progress >= 100;
-            const isWarning = limit > 0 && progress >= 80 && progress < 100;
-
-            return (
-              <div key={cat.id} style={{
-                background: isOver ? 'rgba(239, 68, 68, 0.07)' : 'rgba(255,255,255,0.03)',
-                padding: '1rem 1.25rem',
-                borderRadius: 'var(--radius-lg)',
-                border: isOver ? '1px solid rgba(239,68,68,0.4)' : isWarning ? '1px solid rgba(245,158,11,0.3)' : '1px solid rgba(255,255,255,0.06)',
-                position: 'relative',
-                overflow: 'hidden',
-                transition: 'border 0.3s'
-              }}>
-                {isOver && <div style={{ position: 'absolute', top: 0, left: 0, width: '3px', height: '100%', background: 'var(--danger-color)', borderRadius: '4px 0 0 4px' }} />}
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', paddingLeft: isOver ? '8px' : '0' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: 'var(--text-main)', fontSize: '0.9rem' }}>
-                    <cat.icon size={15} style={{ color: isOver ? 'var(--danger-color)' : 'var(--primary-color)' }} />
-                    {cat.id}
-                  </span>
-                  {isEditing ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>R$</span>
-                      <input
-                        type="number"
-                        autoFocus
-                        value={budgetTempVal}
-                        onChange={e => setBudgetTempVal(e.target.value)}
-                        onKeyDown={e => { if(e.key === 'Enter') saveBudget(cat.id); if(e.key === 'Escape') setEditingBudgetFor(null); }}
-                        style={{
-                          width: '90px', padding: '0.2rem 0.5rem',
-                          background: 'rgba(99,102,241,0.15)',
-                          border: '1px solid var(--primary-color)',
-                          borderRadius: 'var(--radius-sm)',
-                          color: 'var(--text-main)',
-                          outline: 'none',
-                          fontSize: '0.875rem'
-                        }}
-                        placeholder="0,00"
-                      />
-                      <button
-                        onClick={() => saveBudget(cat.id)}
-                        style={{ background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '0.2rem 0.5rem', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
-                      >OK</button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => { setEditingBudgetFor(cat.id); setBudgetTempVal(String(limit || '')); }}
-                      style={{
-                        background: 'rgba(99,102,241,0.1)',
-                        border: '1px solid rgba(99,102,241,0.3)',
-                        borderRadius: 'var(--radius-full)',
-                        color: 'var(--primary-color)',
-                        fontSize: '0.75rem',
-                        padding: '0.2rem 0.6rem',
-                        cursor: 'pointer',
-                        fontWeight: 600
-                      }}
-                    >
-                      {limit > 0 ? `Teto: ${formatCurrency(limit)}` : '+ Definir Meta'}
-                    </button>
-                  )}
-                </div>
-
-                {limit > 0 ? (
-                  <div style={{ paddingLeft: isOver ? '8px' : '0' }}>
-                    <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div style={{
-                        height: '100%',
-                        width: `${Math.min(progress, 100)}%`,
-                        background: isOver ? 'var(--danger-color)' : isWarning ? '#f59e0b' : 'var(--success-color)',
-                        borderRadius: '3px',
-                        transition: 'width 0.4s ease'
-                      }} />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.4rem', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                      <span>Gasto: <strong style={{ color: 'var(--text-main)' }}>{formatCurrency(usedRaw)}</strong></span>
-                      <span style={{ color: isOver ? 'var(--danger-color)' : isWarning ? '#f59e0b' : 'var(--success-color)', fontWeight: 600 }}>
-                        {progress.toFixed(0)}%
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ paddingLeft: isOver ? '8px' : '0', color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
-                    Meta não definida
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderGeneralView = () => (
     <div className={`animate-fade-in ${isTxFullscreen ? 'tx-fullscreen-view' : ''}`}>
       {!isTxFullscreen && (
         <>
-          <div className="stats-grid">
-            <div className="stat-card">
-              <div className="stat-label">Saldo Atual</div>
-              <div className="stat-value">{formatCurrency(totals.balance)}</div>
-              <div className="stat-footer flex items-center gap-1">
-                <Shield size={14} className="text-success" /> Conta Protegida
+          <div className="dashboard-header">
+            <div>
+              <h1 className="dashboard-title">Relatórios Detalhados</h1>
+              <p className="dashboard-subtitle">Análise Financeira Completa e Leitura OFX.</p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".ofx" style={{ display: 'none' }} />
+              <button className="btn btn-secondary" onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ background: 'rgba(59, 130, 246, 0.1)', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
+                <UploadCloud size={18} /> Importar OFX
+              </button>
+              <button className="btn btn-secondary" onClick={handleExportPDF}>
+                <FileDown size={18} className="text-danger" /> PDF
+              </button>
+              <button className="btn btn-secondary" onClick={handleExportExcel}>
+                <FileDown size={18} className="text-success" /> Excel
+              </button>
+            </div>
+          </div>
+          
+          {renderInteractiveSelector()}
+
+          {/* Cards de Resumo */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+            <div className="glass-panel stat-card">
+              <div className="stat-header"><span className="stat-title">Saldo</span><div className="stat-icon" style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--primary-color)' }}><Wallet size={16}/></div></div>
+              <div className="stat-value" style={{ fontSize: '1.3rem' }}>{formatCurrency(filteredTotals.balance)}</div>
+            </div>
+            <div className="glass-panel stat-card">
+              <div className="stat-header"><span className="stat-title text-success">Receitas</span><div className="stat-icon" style={{ background: 'rgba(16,185,129,0.1)', color: 'var(--success-color)' }}><ArrowUpRight size={16}/></div></div>
+              <div className="stat-value text-success" style={{ fontSize: '1.3rem' }}>+{formatCurrency(filteredTotals.income)}</div>
+            </div>
+            <div className="glass-panel stat-card">
+              <div className="stat-header"><span className="stat-title text-danger">Despesas</span><div className="stat-icon" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger-color)' }}><ArrowDownRight size={16}/></div></div>
+              <div className="stat-value text-danger" style={{ fontSize: '1.3rem' }}>-{formatCurrency(filteredTotals.expense)}</div>
+            </div>
+            <div className="glass-panel stat-card">
+              <div className="stat-header"><span className="stat-title">Lançamentos</span><div className="stat-icon" style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--primary-color)' }}><FileText size={16}/></div></div>
+              <div className="stat-value" style={{ fontSize: '1.3rem' }}>{filteredTransactions.length}</div>
+            </div>
+            <div className="glass-panel stat-card">
+              <div className="stat-header"><span className="stat-title">Taxa de Poupança</span><div className="stat-icon" style={{ background: 'rgba(16,185,129,0.1)', color: 'var(--success-color)' }}><TrendingUp size={16}/></div></div>
+              <div className="stat-value" style={{ fontSize: '1.3rem', color: filteredTotals.income > 0 && (filteredTotals.income - filteredTotals.expense) / filteredTotals.income > 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                {filteredTotals.income > 0 ? `${(((filteredTotals.income - filteredTotals.expense) / filteredTotals.income) * 100).toFixed(1)}%` : '0%'}
               </div>
             </div>
-            <div className="stat-card">
-              <div className="stat-label">Receitas (Mês)</div>
-              <div className="stat-value text-success">+{formatCurrency(totals.income)}</div>
-              <div className="stat-footer">
-                <ArrowUpRight size={14} className="text-success" /> Planejamento OK
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Despesas (Mês)</div>
-              <div className="stat-value text-danger">-{formatCurrency(totals.expense)}</div>
-              <div className="stat-footer">
-                <ArrowDownRight size={14} className="text-danger" /> {totals.expense > totals.income ? 'Atenção ao limite' : 'Dentro da meta'}
-              </div>
+            <div className="glass-panel stat-card" style={{ border: `1px solid ${healthScore > 70 ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.3)'}` }}>
+              <div className="stat-header"><span className="stat-title">Fync Score</span><div className="stat-icon" style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--primary-color)' }}><Activity size={16}/></div></div>
+              <div className="stat-value" style={{ fontSize: '1.3rem' }}>{healthScore}<span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>/100</span></div>
             </div>
           </div>
 
-            <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
-              <h2 className="chart-title">Proporção Receitas x Despesas</h2>
-              <div style={{ width: '100%', height: 320 }}>
-                {pieData[0].value === 0 && pieData[1].value === 0 ? (
-                  <div className="flex h-full items-center justify-center text-muted">Sem dados no período.</div>
-                ) : (
+          {/* Gráficos: Barras por Categoria + Pizza */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            <div className="glass-panel" style={{ padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}>
+              <h2 className="chart-title" style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <BarChart2 size={18} style={{ color: 'var(--primary-color)' }} /> Gastos por Categoria
+              </h2>
+              {dynamicCategoryData.length > 0 ? (
+                <div style={{ width: '100%', height: 240 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <RechartsPieChart>
-                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={65} outerRadius={95} paddingAngle={5} dataKey="value">
-                        <Cell key="cell-0" fill="#10b981" />
-                        <Cell key="cell-1" fill="#ef4444" />
-                      </Pie>
-                      <RechartsTooltip formatter={(v) => formatCurrency(v)} contentStyle={{ backgroundColor: '#171923', borderColor: '#272a37' }} />
-                    </RechartsPieChart>
+                    <BarChart data={dynamicCategoryData} layout="vertical" margin={{ left: 5, right: 25 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#272a37" horizontal={false} />
+                      <XAxis type="number" stroke="#94a3b8" tickFormatter={v => `R$${v}`} fontSize={10} />
+                      <YAxis type="category" dataKey="name" stroke="#94a3b8" width={75} fontSize={11} />
+                      <RechartsTooltip contentStyle={{ backgroundColor: '#171923', border: 'none', borderRadius: '8px' }} formatter={v => [formatCurrency(v), 'Gasto']} />
+                      <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                        {dynamicCategoryData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
                   </ResponsiveContainer>
-                )}
-              </div>
+                </div>
+              ) : (
+                <div style={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  Nenhuma despesa registrada no período.
+                </div>
+              )}
             </div>
 
-            <div className="glass-panel" style={{ padding: '2rem', height: '400px', borderRadius: 'var(--radius-xl)' }}>
-              <h2 className="chart-title mb-8">Fluxo de Caixa Mensal</h2>
+            <div className="glass-panel" style={{ padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}>
+              <h2 className="chart-title" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <PieChart size={18} style={{ color: 'var(--primary-color)' }} /> Distribuição de Categorias
+              </h2>
+              {dynamicCategoryData.length > 0 ? (
+                <>
+                  <div style={{ width: '100%', height: 155 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RechartsPieChart>
+                        <Pie data={dynamicCategoryData} cx="50%" cy="50%" innerRadius={40} outerRadius={68} paddingAngle={3} dataKey="value">
+                          {dynamicCategoryData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <RechartsTooltip contentStyle={{ backgroundColor: '#171923', border: 'none', borderRadius: '8px' }} formatter={v => [formatCurrency(v), 'Gasto']} />
+                      </RechartsPieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.5rem' }}>
+                    {dynamicCategoryData.slice(0, 6).map((d, i) => {
+                      const total = dynamicCategoryData.reduce((s, x) => s + x.value, 0);
+                      const pct = total > 0 ? ((d.value / total) * 100).toFixed(1) : '0.0';
+                      return (
+                        <div key={d.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                            <span className="text-muted">{d.name}</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.6rem' }}>
+                            <span className="text-muted">{formatCurrency(d.value)}</span>
+                            <span className="font-bold">{pct}%</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div style={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  Nenhuma despesa registrada.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Fluxo de Caixa */}
+          <div className="glass-panel" style={{ padding: '1.5rem', borderRadius: 'var(--radius-xl)', marginBottom: '1.5rem' }}>
+            <h2 className="chart-title" style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <TrendingUp size={18} style={{ color: 'var(--primary-color)' }} /> Fluxo de Caixa — Receitas vs Despesas
+            </h2>
+            <div style={{ width: '100%', height: 260 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
+                <AreaChart data={dynamicFlowData}>
                   <defs>
-                    <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient>
-                    <linearGradient id="colorPv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0}/></linearGradient>
+                    <linearGradient id="repColorUv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient>
+                    <linearGradient id="repColorPv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0}/></linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#272a37" vertical={false} />
-                  <XAxis dataKey="name" stroke="#94a3b8" />
-                  <YAxis stroke="#94a3b8" tickFormatter={(v) => `R$${v}`} />
-                  <RechartsTooltip contentStyle={{ backgroundColor: '#171923', border: 'none' }} />
-                  <Area type="monotone" dataKey="Receitas" stroke="#10b981" fillOpacity={1} fill="url(#colorUv)" />
-                  <Area type="monotone" dataKey="Despesas" stroke="#ef4444" fillOpacity={1} fill="url(#colorPv)" />
+                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
+                  <YAxis stroke="#94a3b8" tickFormatter={v => `R$${v}`} fontSize={11} />
+                  <RechartsTooltip contentStyle={{ backgroundColor: '#171923', border: 'none', borderRadius: '8px' }} formatter={v => formatCurrency(v)} />
+                  <Legend />
+                  <Area type="monotone" dataKey="Receitas" stroke="#10b981" fillOpacity={1} fill="url(#repColorUv)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="Despesas" stroke="#ef4444" fillOpacity={1} fill="url(#repColorPv)" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
+          </div>
+
+          {/* Orçamento Mensal */}
+          <div className="glass-panel" style={{ marginBottom: '1.5rem', padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}>
+            <h2 className="chart-title mb-4" style={{ display:'flex', alignItems:'center', gap:'0.5rem' }}>
+              <Activity size={18} style={{ color: 'var(--primary-color)' }} />
+              Orçamento Mensal — Travas de Gastos
+            </h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
+              {CATEGORIES.map(cat => {
+                if (cat.id === 'Investimentos' || cat.id === 'Outros') return null;
+                const limit = budgets[cat.id] || 0;
+                const usedRaw = dynamicCategoryData.find(d => d.name === cat.id)?.value || 0;
+                const progress = limit > 0 ? (usedRaw / limit) * 100 : 0;
+                const isEditing = editingBudgetFor === cat.id;
+                const isOver = limit > 0 && progress >= 100;
+
+                return (
+                  <div key={cat.id} style={{
+                    background: isOver ? 'rgba(239, 68, 68, 0.07)' : 'rgba(255,255,255,0.03)',
+                    padding: '1rem',
+                    borderRadius: 'var(--radius-lg)',
+                    border: isOver ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(255,255,255,0.06)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, fontSize: '0.85rem' }}>
+                        <cat.icon size={14} style={{ color: isOver ? 'var(--danger-color)' : 'var(--primary-color)' }} />
+                        {cat.id}
+                      </span>
+                      {isEditing ? (
+                        <input
+                          type="number" autoFocus size="5"
+                          value={budgetTempVal}
+                          onChange={e => setBudgetTempVal(e.target.value)}
+                          onBlur={() => saveBudget(cat.id)}
+                          onKeyDown={e => { if(e.key === 'Enter') saveBudget(cat.id); }}
+                          className="input-field" style={{ padding: '2px 5px', width: '70px', fontSize: '0.8rem' }}
+                        />
+                      ) : (
+                        <button onClick={() => { setEditingBudgetFor(cat.id); setBudgetTempVal(String(limit || '')); }} style={{ background: 'none', border: 'none', color: 'var(--primary-color)', fontSize: '0.75rem', cursor: 'pointer' }}>
+                          {limit > 0 ? formatCurrency(limit) : '+ Definir Meta'}
+                        </button>
+                      )}
+                    </div>
+                    {limit > 0 && (
+                      <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', marginBottom: '0.3rem' }}>
+                        <div style={{ width: `${Math.min(progress, 100)}%`, height: '100%', background: isOver ? 'var(--danger-color)' : 'var(--success-color)', borderRadius: '2px' }} />
+                      </div>
+                    )}
+                    <div style={{ fontSize: '0.7rem', color: isOver ? 'var(--danger-color)' : 'var(--text-muted)', marginTop: '0.3rem' }}>
+                      {limit > 0 ? `${formatCurrency(usedRaw)} / ${formatCurrency(limit)} (${progress.toFixed(0)}%)` : 'Meta não definida'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </>
       )}
+    </div>
+  );
 
-      {/* Optimized Transaction List with Fullscreen support */}
-      <div 
-        className={`glass-panel ${isTxFullscreen ? 'immersive-tx-view' : ''}`} 
-        style={isTxFullscreen ? { 
-          position: 'fixed', top: '2rem', left: '6.5rem', right: '2rem', bottom: '2rem', 
-          zIndex: 1000, display: 'flex', flexDirection: 'column', padding: '2rem', boxShadow: '0 0 50px rgba(0,0,0,0.5)', borderRadius: 'var(--radius-xl)'
-        } : { padding: '1.5rem', borderRadius: 'var(--radius-xl)' }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <h2 className="chart-title" style={{ margin: 0 }}>Histórico de Lançamentos ({filteredTransactions.length})</h2>
-            {selectedIds.length > 0 && (
-              <span className="badge" style={{ backgroundColor: 'var(--primary-color)', color: 'white', padding: '4px 12px', borderRadius: '20px', fontSize: '0.8rem' }}>
-                {selectedIds.length} selecionados
-              </span>
-            )}
+  const renderTransactions = () => (
+    <div className={`animate-fade-in ${isTxFullscreen ? 'tx-fullscreen-view' : ''}`}>
+      {!isTxFullscreen && (
+        <div className="dashboard-header">
+          <div>
+            <h1 className="dashboard-title">Lançamentos</h1>
+            <p className="dashboard-subtitle">Histórico completo · <span className="text-primary font-medium">{getDisplaySubtitle()}</span></p>
           </div>
-          
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {selectedIds.length > 0 && (
-              <div style={{ display: 'flex', gap: '0.4rem', marginRight: '1rem' }}>
-                <select 
-                  className="input-field" 
-                  style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
-                  onChange={(e) => handleBulkUpdateCategory(e.target.value)}
-                  defaultValue=""
-                >
-                  <option value="" disabled>📁 Trocar Categoria...</option>
-                  {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
-                </select>
-                <button className="btn-icon text-danger" onClick={handleBulkDelete} title="Excluir Selecionados">
-                  <Trash2 size={20} />
-                </button>
-              </div>
-            )}
-
-            <button 
-              className="btn-icon" 
-              onClick={() => {
-                const allIds = filteredTransactions.map(t => t.id);
-                if (selectedIds.length === allIds.length) setSelectedIds([]);
-                else setSelectedIds(allIds);
-              }}
-              title="Selecionar Tudo"
-              style={{ color: selectedIds.length > 0 && selectedIds.length === filteredTransactions.length ? 'var(--primary-color)' : 'inherit' }}
-            >
-              <CheckCircle2 size={22} />
+          <div className="flex gap-2">
+            <button className="btn btn-secondary" onClick={handleExportPDF}>
+              <FileDown size={18} className="text-danger" /> PDF
             </button>
-
-            <button className="btn-icon" onClick={() => setIsTxFullscreen(!isTxFullscreen)} title="Alternar Tela Cheia">
-              {isTxFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
+            <button className="btn btn-secondary" onClick={handleExportExcel}>
+              <FileDown size={18} className="text-success" /> Excel
+            </button>
+            <button className="btn btn-primary" onClick={() => openNewTransaction('expense')}>
+              <Plus size={18} /> Nova Transação
             </button>
           </div>
         </div>
-
-        <div style={{ overflowY: 'auto', flex: 1, maxHeight: isTxFullscreen ? 'none' : '450px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                <th style={{ padding: '1rem', width: '40px' }}></th>
-                <th style={{ padding: '1rem', textAlign: 'left' }}>Data</th>
-                <th style={{ padding: '1rem', textAlign: 'left' }}>Descrição</th>
-                <th style={{ padding: '1rem', textAlign: 'left' }}>Conta</th>
-                <th style={{ padding: '1rem', textAlign: 'left' }}>Categoria</th>
-                <th style={{ padding: '1rem', textAlign: 'right' }}>Valor</th>
-                <th style={{ padding: '1rem', textAlign: 'right' }}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(isTxFullscreen ? filteredTransactions : filteredTransactions.slice(0, 50)).map(t => (
-                <tr 
-                  key={t.id} 
-                  style={{ 
-                    borderBottom: '1px solid var(--border-color)', 
-                    background: selectedIds.includes(t.id) ? 'rgba(99, 102, 241, 0.05)' : 'transparent',
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  <td style={{ padding: '1rem' }}>
-                    <input 
-                      type="checkbox" 
-                      style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
-                      checked={selectedIds.includes(t.id)} 
-                      onChange={() => setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id])} 
-                    />
-                  </td>
-                  <td style={{ padding: '1rem', whiteSpace: 'nowrap', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                    {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Sem Data'}
-                  </td>
-                  <td style={{ padding: '1rem' }}>
-                    <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{t.title}</div>
-                  </td>
-                  <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    {wallets.find(w => w.id === t.walletId)?.name || 'N/A'}
-                  </td>
-                  <td style={{ padding: '1rem' }}>
-                    <span className="category-tag">{t.category}</span>
-                  </td>
-                  <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 700, color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)' }}>
-                    {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
-                  </td>
-                  <td style={{ padding: '1rem', textAlign: 'right' }}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                      <button className="btn-icon" onClick={() => openEditTransaction(t)}><Edit2 size={16} /></button>
-                      <button className="btn-icon" onClick={() => deleteTransaction(t.id)}><Trash2 size={16} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      )}
+      {!isTxFullscreen && renderInteractiveSelector()}
+      {renderMainTransactionTable()}
     </div>
   );
 
@@ -1890,38 +2006,48 @@ export default function Dashboard() {
     }
     setIsQuotesLoading(true);
     try {
-      // Filtrar apenas o ticker base (remover sufixos se houver)
-      const cleanTickers = tickers.map(t => String(t).split('-')[0].trim()).join(',');
-      
-      // Brapi version: Se falhar em massa, tentamos individualmente ou via proxy
-      const response = await fetch(`https://brapi.dev/api/quote/${cleanTickers}`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data && data.results && data.results.length > 0) {
-        const newQuotes = {};
-        data.results.forEach(res => {
-          if (res.symbol && (res.regularMarketPrice || res.price)) {
-            newQuotes[res.symbol] = res.regularMarketPrice || res.price;
-          }
-        });
-        
-        if (Object.keys(newQuotes).length === 0) {
-          showToast('Cotações não encontradas (API limitada).', 'warning');
-        } else {
-          setStockQuotes(prev => ({ ...prev, ...newQuotes }));
-          showToast(`✅ ${Object.keys(newQuotes).length} ativos atualizados.`);
+      const cleanTickersArr = tickers.map(t => {
+        let ticker = String(t).split('-')[0].trim().toUpperCase();
+        if (ticker && !ticker.includes('.')) {
+          return `${ticker}.SA`;
         }
+        return ticker;
+      });
+      
+      const newQuotes = {};
+      
+      // Busca paralela para cada ticker no Yahoo Finance via proxy
+      const promises = cleanTickersArr.map(async (ticker) => {
+        try {
+          const response = await fetch(`/api/yahoo/v8/finance/chart/${ticker}?interval=1d&range=1d`);
+          if (!response.ok) return null;
+          const data = await response.json();
+          const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+          
+          if (price) {
+            newQuotes[ticker] = price;
+            // Guardar também sem o sufixo .SA para fácil mapeamento
+            const baseSymbol = ticker.split('.')[0];
+            newQuotes[baseSymbol] = price;
+            return true;
+          }
+        } catch (err) {
+          console.warn(`Erro ao buscar cotação para ${ticker}:`, err);
+        }
+        return null;
+      });
+
+      await Promise.all(promises);
+
+      if (Object.keys(newQuotes).length > 0) {
+        setStockQuotes(prev => ({ ...prev, ...newQuotes }));
+        showToast(`✅ ${Object.keys(newQuotes).length / 2} ativos atualizados.`);
       } else {
-        showToast('Nenhum dado retornado pela API.', 'warning');
+        showToast('Nenhuma cotação encontrada. Verifique os tickers.', 'warning');
       }
     } catch (err) {
       console.error('Erro ao buscar cotações:', err);
-      showToast('Erro na API de cotações. Tente novamente mais tarde.', 'error');
+      showToast('API de Cotações indisponível no momento.', 'error');
     } finally {
       setIsQuotesLoading(false);
     }
@@ -2169,7 +2295,22 @@ export default function Dashboard() {
                   {portfolioList.length > 0 ? portfolioList.map(p => (
                     <tr key={p.ticker} style={{ borderBottom: '1px solid var(--border-color)', height: '50px' }}>
                       <td style={{ padding: '0.75rem' }}>
-                        <div style={{ fontWeight: 'bold', color: 'var(--primary-color)' }}>{p.ticker}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <div style={{ fontWeight: 'bold', color: 'var(--primary-color)' }}>{p.ticker}</div>
+                          <button 
+                            className="btn-icon" 
+                            style={{ opacity: 0.6 }} 
+                            title="Ajustar Preço/Qtd"
+                            onClick={() => {
+                               setAssetAdjustTarget(p);
+                               setAssetAdjustQty(p.quantity.toString());
+                               setAssetAdjustAvgPrice((p.quantity > 0 ? (p.totalInvested / p.quantity) : 0).toFixed(2));
+                               setIsAssetAdjustmentModalOpen(true);
+                            }}
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                        </div>
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>{p.quantity}</td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatCurrency(p.quantity > 0 ? (p.totalInvested / p.quantity) : 0)}</td>
@@ -2541,6 +2682,14 @@ export default function Dashboard() {
                   opacity: sub.isActive ? 1 : 0.5 
                 }}>
                    <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '0.5rem' }}>
+                      <button className="btn-icon" title="Editar Assinatura" onClick={() => {
+                        setEditSubTarget(sub);
+                        setEditSubName(sub.name);
+                        setEditSubAmount(sub.amount.toString());
+                        setEditSubCategory(sub.category || 'Lazer');
+                        setEditSubBillingDay(sub.billingDay);
+                        setIsEditSubModalOpen(true);
+                      }}><Edit2 size={16} className="text-primary"/></button>
                       <button className="btn-icon" onClick={() => deleteSubscription(sub.id)} title="Excluir Definitivamente"><Trash2 size={16} className="text-danger"/></button>
                    </div>
                    <div className="flex items-center gap-2 mb-2">
@@ -2591,7 +2740,7 @@ export default function Dashboard() {
                       <button className="btn-icon" onClick={() => deleteGoal(goal.id)}><Trash2 size={18} className="text-danger"/></button>
                     </div>
                     
-                    <div className="flex justify-between items-end mb-4">
+                    <div className="flex justify-between items-end mb-4" style={{ paddingRight: '2rem' }}>
                       <div>
                         <h3 className="font-bold text-xl flex items-center gap-2">
                           <Target style={{ color: goal.color || 'var(--primary-color)' }} /> 
@@ -2636,11 +2785,10 @@ export default function Dashboard() {
                         <button 
                           className="btn btn-secondary text-sm"
                           onClick={() => {
-                            const add = prompt('Quanto você deseja adicionar a essa meta?');
-                            if (add && !isNaN(add)) {
-                               const newTotal = parseFloat(goal.currentAmount) + parseFloat(add);
-                               updateGoalProgress(goal.id, newTotal);
-                            }
+                            setGoalProgressTarget(goal);
+                            setGoalProgressAmount('');
+                            setGoalProgressWalletId(wallets && wallets.length > 0 ? wallets[0].id : '');
+                            setIsGoalProgressModalOpen(true);
                           }}
                         >
                           + Adicionar Progresso
@@ -2839,119 +2987,151 @@ export default function Dashboard() {
       {/* Sidebar Overlay for mobile */}
       {isSidebarOpen && <div className="sidebar-overlay" onClick={() => setIsSidebarOpen(false)}></div>}
 
-      {/* Sidebar */}
-      <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
-        <div className="sidebar-header">
-          <div className="sidebar-logo">
-            <img src="/logo.png" alt="Fync Logo" style={{ width: '28px', height: '28px', objectFit: 'contain' }} /> 
-            Fync
+      {!isTxFullscreen && (
+        <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
+          <div className="sidebar-header">
+            <div className="sidebar-logo">
+              <img src="/logo.png" alt="Fync Logo" style={{ width: '28px', height: '28px', objectFit: 'contain' }} /> 
+              Fync
+            </div>
           </div>
-        </div>
-        <nav className="sidebar-nav">
-          <div className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => { setActiveTab('overview'); setIsSidebarOpen(false); }}><LayoutDashboard size={20} /> Visão Geral</div>
-          <div className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }}><PieChart size={20} /> Relatórios</div>
-          <div className={`nav-item ${activeTab === 'investments' ? 'active' : ''}`} onClick={() => { setActiveTab('investments'); setIsSidebarOpen(false); }}><TrendingUp size={20} /> Investimentos</div>
-          <div className={`nav-item ${activeTab === 'subscriptions' ? 'active' : ''}`} onClick={() => { setActiveTab('subscriptions'); setIsSidebarOpen(false); }}><Repeat size={20} /> Assinaturas</div>
-          <div className={`nav-item ${activeTab === 'goals' ? 'active' : ''}`} onClick={() => { setActiveTab('goals'); setIsSidebarOpen(false); }}><Target size={20} /> Metas</div>
-          <div className={`nav-item ${activeTab === 'wallets' ? 'active' : ''}`} onClick={() => { setActiveTab('wallets'); setIsSidebarOpen(false); }}><CreditCard size={20} /> Carteiras</div>
-          <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }}><Settings size={20} /> Configurações</div>
-        </nav>
-        <div className="sidebar-footer">
-          <div className="nav-item" onClick={logout}><LogOut size={20} /> Sair</div>
-        </div>
-      </aside>
+          <nav className="sidebar-nav">
+            <div className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => { setActiveTab('overview'); setIsSidebarOpen(false); }}><LayoutDashboard size={20} /> Visão Geral</div>
+            <div className={`nav-item ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => { setActiveTab('transactions'); setIsSidebarOpen(false); }}><FileText size={20} /> Lançamentos</div>
+            <div className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }}><PieChart size={20} /> Relatórios</div>
+            <div className={`nav-item ${activeTab === 'investments' ? 'active' : ''}`} onClick={() => { setActiveTab('investments'); setIsSidebarOpen(false); }}><TrendingUp size={20} /> Investimentos</div>
+            <div className={`nav-item ${activeTab === 'subscriptions' ? 'active' : ''}`} onClick={() => { setActiveTab('subscriptions'); setIsSidebarOpen(false); }}><Repeat size={20} /> Assinaturas</div>
+            <div className={`nav-item ${activeTab === 'goals' ? 'active' : ''}`} onClick={() => { setActiveTab('goals'); setIsSidebarOpen(false); }}><Target size={20} /> Metas</div>
+            <div className={`nav-item ${activeTab === 'wallets' ? 'active' : ''}`} onClick={() => { setActiveTab('wallets'); setIsSidebarOpen(false); }}><CreditCard size={20} /> Carteiras</div>
+            <div className={`nav-item ${activeTab === 'ai' ? 'active' : ''}`} onClick={() => { setActiveTab('ai'); setIsSidebarOpen(false); }} style={activeTab === 'ai' ? {} : { position: 'relative' }}>
+              <Sparkles size={20} /> Fync AI
+              {activeTab !== 'ai' && (
+                <span style={{ marginLeft: 'auto', fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: '9999px', background: 'linear-gradient(135deg,#6366f1,#818cf8)', color: 'white', letterSpacing: '0.02em' }}>NOVO</span>
+              )}
+            </div>
+            <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }}><Settings size={20} /> Configurações</div>
+          </nav>
+          <div className="sidebar-footer">
+            <div className="nav-item" onClick={logout}><LogOut size={20} /> Sair</div>
+          </div>
+        </aside>
+      )}
 
       {/* Main Content */}
       <main className="main-content">
-        <header className="top-header">
-          <div className="flex items-center gap-4">
-            <button className="menu-toggle btn-icon" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
-              <Menu size={24} />
-            </button>
-            <div className="header-search">
-              <Search className="search-icon" size={18} />
-              <input type="text" className="search-input" placeholder="Buscar lançamentos..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-            </div>
-          </div>
-          <div className="header-actions">
-            
-            {/* Notification Dropdown */}
-            <div className="relative-container">
-              <button className="btn-icon" onClick={() => { setIsNotifOpen(!isNotifOpen); setIsProfileOpen(false); }}>
-                <Bell size={20} />
-                {activeNotifs.length > 0 && <span className="notif-badge"></span>}
+        {!isTxFullscreen && (
+          <header className="top-header">
+            <div className="flex items-center gap-4">
+              <button className="menu-toggle btn-icon" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
+                <Menu size={24} />
               </button>
-              
-              {isNotifOpen && (
-                <div className="header-dropdown glass-panel">
-                  <div className="header-dropdown-title flex items-center justify-between">
-                    <span>Notificações</span>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{activeNotifs.length} novas</span>
-                  </div>
-                  
-                  {activeNotifs.length === 0 ? (
-                    <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                      Você não tem notificações novas.
-                    </div>
-                  ) : (
-                    activeNotifs.map(notif => (
-                      <div key={notif.id} className="header-dropdown-item" onClick={() => handleNotifClick(notif)}>
-                        <div className="notif-icon" style={{ 
-                          background: notif.type === 'danger' ? 'rgba(239, 68, 68, 0.1)' : notif.type === 'warning' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(16, 185, 129, 0.1)', 
-                          color: notif.type === 'danger' ? 'var(--danger-color)' : notif.type === 'warning' ? '#f59e0b' : 'var(--success-color)' 
-                        }}>
-                          {notif.icon}
-                        </div>
-                        <div>
-                          <p style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>{notif.title}</p>
-                          <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{notif.desc}</p>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
+              <div className="header-search">
+                <Search className="search-icon" size={18} />
+                <input type="text" className="search-input" placeholder="Buscar lançamentos..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+              </div>
             </div>
-
-            {/* User Profile Dropdown */}
-            <div className="relative-container">
-              <div className="user-profile" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }} onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
-                <div className="user-info text-right" style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span className="font-medium text-sm">{currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0]}</span>
-                </div>
-                <div className="user-avatar" style={{ background: accentColor }}>{(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}</div>
+            <div className="header-actions">
+              
+              {/* Notification Dropdown */}
+              <div className="relative-container">
+                <button className="btn-icon" onClick={() => { setIsNotifOpen(!isNotifOpen); setIsProfileOpen(false); }}>
+                  <Bell size={20} />
+                  {activeNotifs.length > 0 && <span className="notif-badge"></span>}
+                </button>
+                
+                {isNotifOpen && (
+                  <div className="header-dropdown glass-panel">
+                    <div className="header-dropdown-title flex items-center justify-between">
+                      <span>Notificações</span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{activeNotifs.length} novas</span>
+                    </div>
+                    
+                    {activeNotifs.length === 0 ? (
+                      <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        Você não tem notificações novas.
+                      </div>
+                    ) : (
+                      activeNotifs.map(notif => (
+                        <div key={notif.id} className="header-dropdown-item" onClick={() => handleNotifClick(notif)}>
+                          <div className="notif-icon" style={{ 
+                            background: notif.type === 'danger' ? 'rgba(239, 68, 68, 0.1)' : notif.type === 'warning' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(16, 185, 129, 0.1)', 
+                            color: notif.type === 'danger' ? 'var(--danger-color)' : notif.type === 'warning' ? '#f59e0b' : 'var(--success-color)' 
+                          }}>
+                            {notif.icon}
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>{notif.title}</p>
+                            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{notif.desc}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
 
-              {isProfileOpen && (
-                <div className="header-dropdown glass-panel profile-dropdown">
-                  <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
-                    <User size={16} /> Meu Perfil
+              {/* User Profile Dropdown */}
+              <div className="relative-container">
+                <div className="user-profile" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }} onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
+                  <div className="user-info text-right" style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span className="font-medium text-sm">{currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0]}</span>
                   </div>
-                  <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
-                    <Settings size={16} /> Configurações
-                  </div>
-                  <div className="dropdown-divider"></div>
-                  <div className="header-dropdown-item" onClick={() => { setActiveTab('subscriptions'); setIsProfileOpen(false); }}>
-                    <Shield size={16} /> Despesas Recorrentes
-                  </div>
-                  <div className="dropdown-divider"></div>
-                  <div className="header-dropdown-item text-danger" onClick={logout}>
-                    <LogOut size={16} /> Sair da Fync
-                  </div>
+                  <div className="user-avatar" style={{ background: accentColor }}>{(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}</div>
                 </div>
-              )}
+
+                {isProfileOpen && (
+                  <div className="header-dropdown glass-panel profile-dropdown">
+                    <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
+                      <User size={16} /> Meu Perfil
+                    </div>
+                    <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
+                      <Settings size={16} /> Configurações
+                    </div>
+                    <div className="dropdown-divider"></div>
+                    <div className="header-dropdown-item" onClick={() => { setActiveTab('subscriptions'); setIsProfileOpen(false); }}>
+                      <Shield size={16} /> Despesas Recorrentes
+                    </div>
+                    <div className="dropdown-divider"></div>
+                    <div className="header-dropdown-item text-danger" onClick={logout}>
+                      <LogOut size={16} /> Sair da Fync
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        </header>
+          </header>
+        )}
 
         <div className="dashboard-scroll-area">
           {activeTab === 'overview' && renderOverview()}
+          {activeTab === 'transactions' && renderTransactions()}
           {activeTab === 'reports' && renderReports()}
           {activeTab === 'investments' && renderInvestments()}
           {activeTab === 'subscriptions' && renderSubscriptions()}
           {activeTab === 'goals' && renderGoals()}
           {activeTab === 'wallets' && renderWallets()}
           {activeTab === 'settings' && renderSettings()}
+          {activeTab === 'ai' && (() => {
+            // Build financial context
+            const expByCategory = (transactions || []).filter(t => t.type === 'expense').reduce((acc, t) => {
+              acc[t.category] = (acc[t.category] || 0) + t.amount;
+              return acc;
+            }, {});
+            const topCategories = Object.entries(expByCategory)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5)
+              .map(([name, total]) => ({ name, total }));
+            const ctx = {
+              totalBalance: (wallets || []).reduce((s, w) => s + (w.balance || 0), 0),
+              totalIncome: totals?.totalIncome || 0,
+              totalExpenses: totals?.totalExpenses || 0,
+              topCategories,
+              activeGoals: (goals || []).filter(g => (g.currentAmount || 0) < g.targetAmount),
+              activeSubscriptions: (subscriptions || []).filter(s => s.isActive),
+              wallets: wallets || [],
+            };
+            return <AiAssistant financialContext={ctx} />;
+          })()}
         </div>
       </main>
 
@@ -3386,6 +3566,62 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Edit Subscription Modal */}
+      {isEditSubModalOpen && editSubTarget && (
+        <div className="modal-overlay animate-fade-in" style={{ zIndex: 9999 }} onClick={() => !loading && setIsEditSubModalOpen(false)}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="flex items-center gap-2" style={{ fontWeight: 'bold' }}><Edit2 size={20} className="text-primary"/> Editar Assinatura</h2>
+              <button type="button" className="btn-icon" onClick={() => !loading && setIsEditSubModalOpen(false)}><X size={24} /></button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              setLoading(true);
+              const res = await updateSubscription(editSubTarget.id, {
+                name: editSubName,
+                amount: parseFloat(editSubAmount),
+                category: editSubCategory,
+                billingDay: parseInt(editSubBillingDay, 10),
+              });
+              if (res?.success !== false) {
+                showToast('Assinatura atualizada com sucesso!');
+                setIsEditSubModalOpen(false);
+              } else {
+                showToast('Erro ao atualizar: ' + (res.message || 'Erro desconhecido'), 'error');
+              }
+              setLoading(false);
+            }} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Nome do Serviço</label>
+                <input type="text" className="input-field" value={editSubName} onChange={e => setEditSubName(e.target.value)} required />
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Valor Mensal (R$)</label>
+                <input type="number" step="0.01" className="input-field" placeholder="0.00" value={editSubAmount} onChange={e => setEditSubAmount(e.target.value)} required />
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Categoria</label>
+                <select className="input-field" value={editSubCategory} onChange={e => setEditSubCategory(e.target.value)} required>
+                  {CATEGORIES.filter(c => c.id !== 'Investimentos').map(c => (
+                    <option key={c.id} value={c.id}>{c.id}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="input-group" style={{ margin: 0 }}>
+                <label className="input-label">Dia do Vencimento Todo Mês</label>
+                <input type="number" min="1" max="31" className="input-field" value={editSubBillingDay} onChange={e => setEditSubBillingDay(e.target.value)} required />
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button type="button" className="btn btn-secondary flex-1" onClick={() => setIsEditSubModalOpen(false)} disabled={loading}>Cancelar</button>
+                <button type="submit" className="btn btn-primary flex-1" disabled={loading}>
+                  {loading ? 'Salvando...' : 'Salvar Alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Goal Modal */}
       {isGoalModalOpen && (
         <div className="modal-overlay animate-fade-in" style={{ zIndex: 9999 }} onClick={() => setIsGoalModalOpen(false)}>
@@ -3426,6 +3662,139 @@ export default function Dashboard() {
               <button type="submit" className="btn btn-primary w-full mt-4" disabled={loading}>
                  {loading ? 'Criando...' : 'Criar Meta de Economia'}
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Goal Progress Interactive Modal */}
+      {isGoalProgressModalOpen && (
+        <div className="modal-overlay animate-fade-in" style={{ zIndex: 9999 }} onClick={() => !loading && setIsGoalProgressModalOpen(false)}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="flex items-center gap-2" style={{ fontWeight: 'bold' }}>
+                <TrendingUp size={20} className="text-primary"/> Adicionar Progresso
+              </h2>
+              <button type="button" className="btn-icon" onClick={() => !loading && setIsGoalProgressModalOpen(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            
+            <p className="text-muted text-sm mb-4">Reserva para: <strong>{goalProgressTarget?.title}</strong></p>
+            
+            <form onSubmit={handleAddGoalProgress} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="input-group" style={{ margin: 0 }}>
+                 <label className="input-label">Quanto deseja guardar? (R$)</label>
+                 <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '0.875rem' }}>R$</span>
+                    <input 
+                      type="number" 
+                      step="0.01" 
+                      className="input-field" 
+                      style={{ paddingLeft: '2.5rem' }}
+                      value={goalProgressAmount} 
+                      onChange={e => setGoalProgressAmount(e.target.value)} 
+                      placeholder="0.00" 
+                      required 
+                      autoFocus
+                    />
+                 </div>
+              </div>
+              
+              <div className="input-group" style={{ margin: 0 }}>
+                 <label className="input-label">Sair de qual carteira? (Opcional)</label>
+                 <select 
+                   className="input-field" 
+                   value={goalProgressWalletId} 
+                   onChange={e => setGoalProgressWalletId(e.target.value)}
+                 >
+                   <option value="">Nenhuma (Apenas registrar Aporte solto)</option>
+                   {wallets.map(w => (
+                     <option key={w.id} value={w.id}>{w.name} ({formatCurrency(w.balance)})</option>
+                   ))}
+                 </select>
+                 <p className="text-xs text-muted mt-2">Isso será registrado como uma Despesa (Investimento) no seu fluxo de caixa.</p>
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                <button 
+                   type="button" 
+                   className="btn btn-secondary flex-1" 
+                   onClick={() => setIsGoalProgressModalOpen(false)}
+                   disabled={loading}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary flex-1" disabled={loading}>
+                   {loading ? 'Processando...' : 'Confirmar Aporte'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Asset Adjustment Interactive Modal */}
+      {isAssetAdjustmentModalOpen && (
+        <div className="modal-overlay animate-fade-in" style={{ zIndex: 9999 }} onClick={() => !loading && setIsAssetAdjustmentModalOpen(false)}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="flex items-center gap-2" style={{ fontWeight: 'bold' }}>
+                <Edit2 size={20} className="text-primary"/> Ajustar Ativo
+              </h2>
+              <button type="button" className="btn-icon" onClick={() => !loading && setIsAssetAdjustmentModalOpen(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            
+            <p className="text-muted text-sm mb-4">Ajustando posição de: <strong>{assetAdjustTarget?.ticker}</strong></p>
+            
+            <form onSubmit={handleAssetAdjustment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="input-group" style={{ margin: 0 }}>
+                   <label className="input-label">Qtd. Real de Cotas</label>
+                   <input 
+                     type="number" 
+                     min="0"
+                     value={assetAdjustQty} 
+                     onChange={e => setAssetAdjustQty(e.target.value)} 
+                     className="input-field" 
+                     required 
+                   />
+                </div>
+                <div className="input-group" style={{ margin: 0 }}>
+                   <label className="input-label">Preço Médio Real (R$)</label>
+                   <input 
+                     type="number" 
+                     step="0.01"
+                     min="0"
+                     value={assetAdjustAvgPrice} 
+                     onChange={e => setAssetAdjustAvgPrice(e.target.value)} 
+                     className="input-field" 
+                     required 
+                   />
+                </div>
+              </div>
+              
+              <div style={{ padding: '1rem', background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 'var(--radius-md)' }}>
+                 <p className="text-xs text-muted" style={{ lineHeight: '1.4' }}>
+                   <strong>Como funciona:</strong> O Fync lançará um "Ajuste Contábil" automático para corrigir a matemática importada da B3 conforme os valores informados acima.
+                 </p>
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                <button 
+                   type="button" 
+                   className="btn btn-secondary flex-1" 
+                   onClick={() => setIsAssetAdjustmentModalOpen(false)}
+                   disabled={loading}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary flex-1" disabled={loading}>
+                   {loading ? 'Ajustando...' : 'Aplicar Ajuste'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
