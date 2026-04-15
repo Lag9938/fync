@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Wallet, AlertCircle } from 'lucide-react';
-import heroImage from '../assets/auth-hero.png';
+import { Mail, Lock, AlertCircle } from 'lucide-react';
+import AuthShowcase from './AuthShowcase';
 import './Auth.css';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
   const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
 
@@ -17,128 +17,61 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
     try {
       const result = await login(email, password);
-      if (result.success) {
-        navigate('/dashboard');
-      } else {
-        setError(result.message);
-      }
-    } catch (err) {
-      setError('Falha ao fazer login.');
+      if (result.success) navigate('/dashboard');
+      else setError(result.message);
+    } catch {
+      setError('Falha ao fazer login. Verifique suas credenciais.');
     }
     setLoading(false);
   };
 
-  return (
-    <div className="auth-container">
-      {/* Branding Side */}
-      <div className="auth-branding">
-        <img 
-          src={heroImage} 
-          alt="Branding" 
-          className="auth-branding-bg"
-        />
-        <div className="auth-branding-overlay"></div>
-        <div className="auth-branding-content">
-          <h2 className="auth-branding-tagline">
-            Sua jornada para a <br />
-            <span style={{ color: 'var(--primary-color)' }}>liberdade financeira</span> <br />
-            começa aqui.
-          </h2>
-          <p className="auth-branding-desc">
-            Organize suas contas, acompanhe seus investimentos e alcance seus objetivos com a simplicidade e o poder do Fync.
-          </p>
-          
-          <div style={{ display: 'flex', gap: '2rem' }}>
-            <div>
-              <div className="font-bold text-xl">+70%</div>
-              <p className="text-sm text-muted">Controle nos gastos</p>
-            </div>
-            <div style={{ width: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
-            <div>
-              <div className="font-bold text-xl">100%</div>
-              <p className="text-sm text-muted">Seguro e Privado</p>
-            </div>
-          </div>
-        </div>
-      </div>
+  const handleGoogle = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await loginWithGoogle();
+      if (result && !result.success) setError(result.message || 'Erro ao conectar com Google.');
+    } catch {
+      setError('Erro ao tentar conectar com o Google.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      {/* Form Side */}
-      <div className="auth-form-side">
-        <div className="auth-card animate-fade-in">
-          <div className="auth-header">
-            <div className="auth-logo">
-              <Wallet size={28} />
-            </div>
-            <h1 className="auth-title">Bem-vindo</h1>
-            <p className="auth-subtitle">Acesse sua conta para continuar gerenciando suas finanças</p>
+  return (
+    <div className="auth-page">
+      {/* ── Animated showcase (shared) ── */}
+      <AuthShowcase />
+
+      {/* ── Right panel ── */}
+      <div className="auth-right">
+        <div className="auth-right-inner">
+
+          <div className="auth-form-header">
+            <h2 className="auth-form-title">Bem-vindo de volta 👋</h2>
+            <p className="auth-form-subtitle">
+              Entre na sua conta para continuar sua jornada financeira.
+            </p>
           </div>
 
           {error && (
-            <div className="error-message">
-              <AlertCircle size={18} />
+            <div className="auth-error">
+              <AlertCircle size={16} />
               {error}
             </div>
           )}
 
-          <form className="auth-form" onSubmit={handleSubmit}>
-            <div className="input-group">
-              <label className="input-label" htmlFor="email">E-mail</label>
-              <input
-                type="email"
-                id="email"
-                className="input-field"
-                placeholder="seu@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className="input-group">
-              <label className="input-label" htmlFor="password">Senha</label>
-              <input
-                type="password"
-                id="password"
-                className="input-field"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-
-            <button type="submit" className="btn btn-primary w-full" disabled={loading}>
-              {loading ? 'Entrando...' : 'Entrar'}
-            </button>
-          </form>
-
-          <div className="auth-separator">
-            <span>ou</span>
-          </div>
-
-          <button 
-            type="button" 
-            className="btn-social" 
-            onClick={async () => {
-              setLoading(true);
-              setError('');
-              try {
-                const result = await loginWithGoogle();
-                if (result && !result.success) {
-                  setError(result.message || 'Erro ao conectar com Google. Verifique o Supabase.');
-                }
-              } catch (err) {
-                setError('Erro ao tentar conectar com o Google.');
-              } finally {
-                setLoading(false);
-              }
-            }}
+          {/* Google — first */}
+          <button
+            className="auth-btn-google"
+            type="button"
+            onClick={handleGoogle}
             disabled={loading}
+            style={{ marginBottom: '1.25rem' }}
           >
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <svg className="auth-google-icon" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
               <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
               <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
@@ -147,8 +80,60 @@ export default function Login() {
             Continuar com o Google
           </button>
 
-          <div className="auth-footer">
-            Não tem uma conta? <Link to="/register">Cadastre-se grátis</Link>
+          <div className="auth-separator">
+            <div className="auth-separator-line" />
+            <span className="auth-separator-text">ou entre com e-mail</span>
+            <div className="auth-separator-line" />
+          </div>
+
+          <form className="auth-form-body" onSubmit={handleSubmit} noValidate>
+            <div className="auth-input-group">
+              <label className="auth-input-label" htmlFor="login-email">E-mail</label>
+              <div className="auth-input-wrapper">
+                <span className="auth-input-icon"><Mail size={15} /></span>
+                <input
+                  id="login-email"
+                  type="email"
+                  className="auth-input"
+                  placeholder="seu@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="auth-input-group">
+              <label className="auth-input-label" htmlFor="login-password">Senha</label>
+              <div className="auth-input-wrapper">
+                <span className="auth-input-icon"><Lock size={15} /></span>
+                <input
+                  id="login-password"
+                  type="password"
+                  className="auth-input"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+            </div>
+
+            <button type="submit" className="auth-btn-submit" disabled={loading}>
+              {loading ? (
+                <span className="auth-btn-loading">
+                  <span className="auth-btn-spinner" />
+                  Entrando...
+                </span>
+              ) : 'Entrar na minha conta'}
+            </button>
+          </form>
+
+          <div className="auth-switch">
+            Não tem uma conta?
+            <Link to="/register">Crie grátis agora →</Link>
           </div>
         </div>
       </div>

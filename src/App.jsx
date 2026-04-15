@@ -1,11 +1,14 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { FinanceProvider } from './contexts/FinanceContext';
+import { AnimatePresence } from 'framer-motion';
 
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import FinnOnboarding from './components/FinnOnboarding';
 
 function ProtectedRoute({ children }) {
   const { currentUser } = useAuth();
@@ -15,6 +18,31 @@ function ProtectedRoute({ children }) {
   }
 
   return children;
+}
+
+function AnimatedRoutes() {
+  const location = useLocation();
+  
+  return (
+    <AnimatePresence mode="wait">
+      <Routes location={location} key={location.pathname}>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route 
+          path="/dashboard" 
+          element={
+            <ProtectedRoute>
+              <>
+                <FinnOnboarding />
+                <Dashboard />
+              </>
+            </ProtectedRoute>
+          } 
+        />
+      </Routes>
+    </AnimatePresence>
+  );
 }
 
 function App() {
@@ -34,20 +62,7 @@ function App() {
     <AuthProvider>
       <FinanceProvider>
         <Router>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route 
-              path="/dashboard" 
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              } 
-            />
-            {/* Redirect root to dashboard -> dashboard will redirect to login if not authenticated */}
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
+          <AnimatedRoutes />
         </Router>
       </FinanceProvider>
     </AuthProvider>
@@ -55,3 +70,4 @@ function App() {
 }
 
 export default App;
+

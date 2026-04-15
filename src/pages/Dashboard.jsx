@@ -51,7 +51,10 @@ import {
   RefreshCw,
   Maximize2,
   Minimize2,
-  Sparkles
+  Sparkles,
+  Gamepad2,
+  Play,
+  Pause
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -60,6 +63,8 @@ import autoTable from 'jspdf-autotable';
 import { parseOFX } from '../utils/ofxParser';
 import { predictCategory } from '../utils/smartCategory';
 import AiAssistant from '../components/AiAssistant';
+import { askGemini, batchCategorizeTransactions } from '../utils/gemini';
+import { motion, AnimatePresence } from 'framer-motion';
 import './Dashboard.css';
 
 const CATEGORIES = [
@@ -81,6 +86,59 @@ const INVESTMENT_CATEGORIES = [
   { id: 'Exterior/BDRs', icon: Globe2 },
   { id: 'Cripto', icon: Bitcoin },
 ];
+
+// Pierre-style Store Icon Mapping with Brand Intelligence
+const STORE_ICONS = {
+  'nubank': { icon: CreditCard, color: '#8a05be', domain: 'nubank.com.br' },
+  'amazon': { icon: ShoppingBag, color: '#ff9900', domain: 'amazon.com' },
+  'riot': { icon: Gamepad2, color: '#d32936', domain: 'riotgames.com' },
+  'netflix': { icon: Play, color: '#e50914', domain: 'netflix.com' },
+  'spotify': { icon: Coffee, color: '#1db954', domain: 'spotify.com' },
+  'steam': { icon: Home, color: '#171a21', domain: 'steampowered.com' },
+  'uber': { icon: Car, color: '#000000', domain: 'uber.com' },
+  'ifood': { icon: Utensils, color: '#ea1d2c', domain: 'ifood.com.br' },
+  'mercado livre': { icon: ShoppingBag, color: '#fff159', domain: 'mercadolivre.com.br' },
+  'google': { icon: Globe2, color: '#4285f4', domain: 'google.com' },
+  'apple': { icon: CreditCard, color: '#000000', domain: 'apple.com' },
+  'sony': { icon: Gamepad2, color: '#000000', domain: 'playstation.com' },
+  'playstatn': { icon: Gamepad2, color: '#000000', domain: 'playstation.com' },
+  'kabum': { icon: ShoppingBag, color: '#0060b1', domain: 'kabum.com.br' },
+  'airbnb': { icon: Home, color: '#ff5a5f', domain: 'airbnb.com' },
+  'disney': { icon: Play, color: '#113ccf', domain: 'disneyplus.com' },
+  'youtube': { icon: Play, color: '#ff0000', domain: 'youtube.com' },
+};
+
+const getStoreIcon = (title) => {
+  const t = title.toLowerCase();
+  for (const [key, data] of Object.entries(STORE_ICONS)) {
+    if (t.includes(key)) return { ...data, isBrand: true };
+  }
+  return { icon: ShoppingBag, color: 'var(--primary-color)', isBrand: false };
+};
+
+const parseInstallment = (title) => {
+  const match = title.match(/(\d+)\s*[/]\s*(\d+)/) || title.match(/parcela\s*(\d+)\s*de\s*(\d+)/i);
+  if (match) {
+    const current = parseInt(match[1]);
+    const total = parseInt(match[2]);
+    
+    // Ignore cases with only 1 installment (e.g. 1/1)
+    if (total <= 1) return { isInstallment: false };
+
+    // Ignore bank transfers/Pix commonly flagged as installments but being just codes
+    const ignoreKeywords = ['pix', 'transferência', 'ted', 'doc', 'pagamento efetuado'];
+    if (ignoreKeywords.some(k => title.toLowerCase().includes(k))) {
+      return { isInstallment: false };
+    }
+
+    return {
+      current,
+      total,
+      isInstallment: true
+    };
+  }
+  return { isInstallment: false };
+};
 
 export default function Dashboard() {
   const { currentUser, logout } = useAuth();
@@ -127,7 +185,8 @@ export default function Dashboard() {
   const [bulkCategoryTarget, setBulkCategoryTarget] = useState('');
 
   // OFX Import state
-  const [ofxPreview, setOfxPreview] = useState(null); // { transactions: [...] } or null
+  const [ofxPreview, setOfxPreview] = useState(null); // { items: [...], walletId: '' }
+  const [isAiCategorizing, setIsAiCategorizing] = useState(false);
 
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -209,6 +268,10 @@ export default function Dashboard() {
   const [toasts, setToasts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [confirmState, setConfirmState] = useState({ isOpen: false, title: '', message: '', onConfirm: null, type: 'danger' });
+  const [isAiFloatingOpen, setIsAiFloatingOpen] = useState(false);
+  const [expandedInstallmentId, setExpandedInstallmentId] = useState(null);
+  const [activeInstallmentTab, setActiveInstallmentTab] = useState('active'); // 'active' | 'finalized'
+  const [activeSubTab, setActiveSubTab] = useState('all'); // 'all' | 'active' | 'inactive'
 
   // Apply Theme globally
   useEffect(() => {
@@ -248,6 +311,28 @@ export default function Dashboard() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
+
+  // Centralized Financial Context for AI
+  const aiFinancialContext = useMemo(() => {
+    const expByCategory = (transactions || []).filter(t => t.type === 'expense').reduce((acc, t) => {
+      acc[t.category] = (acc[t.category] || 0) + t.amount;
+      return acc;
+    }, {});
+    const topCategories = Object.entries(expByCategory)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, total]) => ({ name, total }));
+      
+    return {
+      totalBalance: (wallets || []).reduce((s, w) => s + (w.balance || 0), 0),
+      totalIncome: totals?.totalIncome || 0,
+      totalExpenses: totals?.totalExpenses || 0,
+      topCategories,
+      activeGoals: (goals || []).filter(g => (g.currentAmount || 0) < g.targetAmount),
+      activeSubscriptions: (subscriptions || []).filter(s => s.isActive),
+      wallets: wallets || [],
+    };
+  }, [transactions, wallets, totals, goals, subscriptions]);
   const [type, setType] = useState('expense');
   const [category, setCategory] = useState('Alimentação');
   const [description, setDescription] = useState('');
@@ -1054,20 +1139,65 @@ export default function Dashboard() {
 
     const tryParse = (content) => {
       console.log('[OFX] File read, length:', content.length);
-      console.log('[OFX] First 300 chars:', content.substring(0, 300));
       const extracted = parseOFX(content);
-      console.log('[OFX] Parsed transactions:', extracted.length);
       if (extracted.length === 0) {
         alert('Nenhuma transação encontrada.\n\nVerifique se o arquivo é um extrato .OFX válido do seu banco.');
         return;
       }
+
+      // 1. Pré-categorização local (IMEDIATA) - baseada no histórico
+      const initialItems = extracted.map(item => ({ 
+        ...item, 
+        category: predictCategory(item.title, transactions) || 'Outros',
+        isAiSuggested: false
+      }));
+
+      // Abre o modal IMEDIATAMENTE
       setOfxPreview({ 
-        items: extracted.map(item => ({ 
-          ...item, 
-          category: predictCategory(item.title, transactions) || 'Outros' 
-        })), 
+        items: initialItems, 
         walletId: wallets.length > 0 ? wallets[0].id : '' 
       });
+
+      // 2. Dispara a IA em background (NÃO-BLOQUEANTE)
+      handleAiCategorization(initialItems);
+    };
+
+    const handleAiCategorization = async (currentItems) => {
+      // Filtra apenas o que é "Outros" e limita para não sobrecarregar
+      const itemsToCategorize = currentItems
+        .map((it, idx) => ({ idx, title: it.title, desc: it.description, category: it.category }))
+        .filter(it => it.category === 'Outros' && it.idx < 100);
+
+      if (itemsToCategorize.length === 0) return;
+
+      setIsAiCategorizing(true);
+      try {
+        const catNames = CATEGORIES.map(c => c.id);
+        const aiSuggestions = await batchCategorizeTransactions(
+          itemsToCategorize.map(it => `${it.title} ${it.desc}`.trim()),
+          catNames
+        );
+        
+        // Atualiza conforme as sugestões chegam
+        setOfxPreview(prev => {
+          if (!prev) return null;
+          const updatedItems = [...prev.items];
+          itemsToCategorize.forEach((target, i) => {
+            if (aiSuggestions[i] && updatedItems[target.idx].category === 'Outros') {
+              updatedItems[target.idx] = { 
+                ...updatedItems[target.idx], 
+                category: aiSuggestions[i], 
+                isAiSuggested: true 
+              };
+            }
+          });
+          return { ...prev, items: updatedItems };
+        });
+      } catch (err) {
+        console.error('Falha na IA em background:', err);
+      } finally {
+        setIsAiCategorizing(false);
+      }
     };
 
     // Tenta UTF-8 primeiro, depois Latin-1 (Itaú, Bradesco, BB usam ISO-8859-1)
@@ -1096,13 +1226,30 @@ export default function Dashboard() {
     const wId = ofxPreview.walletId;
     
     try {
-      // Importa todas as transações
+      // Importa transações evitando duplicatas (Título + Valor + Data Idênticos)
+      let importedCount = 0;
+      let skippedCount = 0;
+
       for (const tx of items) {
+        const isDuplicate = transactions.some(existing => {
+          const d1 = new Date(existing.date).toISOString().split('T')[0];
+          const d2 = new Date(tx.date).toISOString().split('T')[0];
+          return existing.title.trim().toLowerCase() === tx.title.trim().toLowerCase() && 
+                 Math.abs(parseFloat(existing.amount) - parseFloat(tx.amount)) < 0.01 && 
+                 d1 === d2;
+        });
+
+        if (isDuplicate) {
+          skippedCount++;
+          continue;
+        }
+
         await addTransaction({ ...tx, walletId: wId });
+        importedCount++;
       }
 
       // Muda o filtro automaticamente para o mês da transação mais recente importada
-      const firstDate = items[0].date; // YYYY-MM-DD...
+      const firstDate = items[0].date; 
       if (firstDate) {
         const targetMonth = firstDate.substring(0, 7); // YYYY-MM
         setFilterMonth(targetMonth);
@@ -1110,7 +1257,11 @@ export default function Dashboard() {
       }
 
       setOfxPreview(null);
-      showToast(`✅ ${items.length} transações importadas com sucesso em ${new Date(items[0].date).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}.`);
+      let toastMsg = `✅ ${importedCount} transações importadas com sucesso em ${new Date(items[0].date).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}.`;
+      if (skippedCount > 0) {
+        toastMsg += ` (${skippedCount} duplicatas ignoradas)`;
+      }
+      showToast(toastMsg);
     } catch (err) {
       console.error('Erro na importação:', err);
       showToast('❌ Ocorreu um erro ao importar as transações.', 'error');
@@ -1372,135 +1523,388 @@ export default function Dashboard() {
       )}
     </div>
   );
+  const renderMainTransactionTable = () => {
+    return (
+      <div 
+        className={`glass-panel ${isTxFullscreen ? 'immersive-tx-view' : ''}`} 
+        style={!isTxFullscreen ? { padding: '1.5rem', borderRadius: 'var(--radius-xl)', marginTop: '1.5rem' } : {}}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <h2 className="chart-title" style={{ margin: 0 }}>Histórico de Lançamentos ({filteredTransactions.length})</h2>
+            {selectedIds.length > 0 && (
+              <span className="badge" style={{ backgroundColor: 'var(--primary-color)', color: 'white', padding: '4px 12px', borderRadius: '20px', fontSize: '0.8rem' }}>
+                {selectedIds.length} selecionados
+              </span>
+            )}
+          </div>
+          
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {selectedIds.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.4rem', marginRight: '1rem' }}>
+                <select 
+                  className="input-field" 
+                  style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
+                  onChange={(e) => handleBulkCategoryUpdate(e.target.value)}
+                  defaultValue=""
+                >
+                  <option value="" disabled>📁 Trocar Categoria...</option>
+                  {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+                </select>
+                <button className="btn-icon text-danger" onClick={handleBulkDelete} title="Excluir Selecionados">
+                  <Trash2 size={20} />
+                </button>
+              </div>
+            )}
 
-  // --- Shared Reusable Transaction Table ---
-  const renderMainTransactionTable = () => (
-    <div 
-      className={`glass-panel ${isTxFullscreen ? 'immersive-tx-view' : ''}`} 
-      style={!isTxFullscreen ? { padding: '1.5rem', borderRadius: 'var(--radius-xl)', marginTop: '1.5rem' } : {}}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <h2 className="chart-title" style={{ margin: 0 }}>Histórico de Lançamentos ({filteredTransactions.length})</h2>
-          {selectedIds.length > 0 && (
-            <span className="badge" style={{ backgroundColor: 'var(--primary-color)', color: 'white', padding: '4px 12px', borderRadius: '20px', fontSize: '0.8rem' }}>
-              {selectedIds.length} selecionados
-            </span>
+            <button 
+              className="btn-icon" 
+              onClick={() => {
+                const allIds = filteredTransactions.map(t => t.id);
+                if (selectedIds.length === allIds.length) setSelectedIds([]);
+                else setSelectedIds(allIds);
+              }}
+              title="Selecionar Tudo"
+              style={{ color: selectedIds.length > 0 && selectedIds.length === filteredTransactions.length ? 'var(--primary-color)' : 'inherit' }}
+            >
+              <CheckCircle2 size={22} />
+            </button>
+
+            <button className="btn-icon" onClick={() => setIsTxFullscreen(!isTxFullscreen)} title="Alternar Tela Cheia">
+              {isTxFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ overflowY: 'auto', overflowX: 'auto', flex: 1, maxHeight: isTxFullscreen ? 'none' : '450px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                <th style={{ padding: '1rem', width: '40px' }}></th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>Data</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>Descrição</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>Conta</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>Categoria</th>
+                <th style={{ padding: '1rem', textAlign: 'right' }}>Valor</th>
+                <th style={{ padding: '1rem', textAlign: 'right' }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(isTxFullscreen ? filteredTransactions : filteredTransactions.slice(0, 50)).map(t => (
+                <tr 
+                  key={t.id} 
+                  className="tx-row-clickable"
+                  onClick={(e) => {
+                    if (e.target.closest('button') || e.target.type === 'checkbox') return;
+                    setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id]);
+                  }}
+                  style={{ 
+                    borderBottom: '1px solid var(--border-color)', 
+                    background: selectedIds.includes(t.id) ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <td style={{ padding: '1rem' }}>
+                    <input 
+                      type="checkbox" 
+                      style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
+                      checked={selectedIds.includes(t.id)} 
+                      onChange={() => setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id])} 
+                    />
+                  </td>
+                  <td style={{ padding: '1rem', whiteSpace: 'nowrap', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                    {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Sem Data'}
+                  </td>
+                  <td style={{ padding: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                      <div className="tx-icon-mini" style={{ 
+                        background: getStoreIcon(t.title).color + '22',
+                        color: getStoreIcon(t.title).color,
+                        width: '32px', height: '32px', borderRadius: '8px',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        {React.createElement(getStoreIcon(t.title).icon, { size: 16 })}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{t.title}</div>
+                        {t.isProjected && (
+                          <span style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary-color)', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Previsto
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    {wallets.find(w => w.id === t.walletId)?.name || 'N/A'}
+                  </td>
+                  <td style={{ padding: '1rem' }}>
+                    <span className="category-tag">{t.category}</span>
+                  </td>
+                  <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 700, color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                    {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
+                  </td>
+                  <td style={{ padding: '1rem', textAlign: 'right' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                      <button className="btn-icon" onClick={() => openEditTransaction(t)}><Edit2 size={16} /></button>
+                      <button className="btn-icon" onClick={() => deleteTransaction(t.id)}><Trash2 size={16} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filteredTransactions.length === 0 && (
+            <div className="text-center text-muted" style={{ padding: '3rem' }}>Nenhum lançamento encontrado.</div>
           )}
         </div>
-        
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          {selectedIds.length > 0 && (
-            <div style={{ display: 'flex', gap: '0.4rem', marginRight: '1rem' }}>
-              <select 
-                className="input-field" 
-                style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem' }}
-                onChange={(e) => handleBulkCategoryUpdate(e.target.value)}
-                defaultValue=""
-              >
-                <option value="" disabled>📁 Trocar Categoria...</option>
-                {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
-              </select>
-              <button className="btn-icon text-danger" onClick={handleBulkDelete} title="Excluir Selecionados">
-                <Trash2 size={20} />
+      </div>
+    );
+  };
+
+  const renderInteractiveOverview = () => {
+    // Generate insights for the greeting card
+    const userName = currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0];
+    const { expense: currentMonthExpense } = filteredTotals;
+    
+    // Find top expense category of the current month
+    const topCat = dynamicCategoryData[0]?.name || '...';
+    
+    // Rhythm logic (simplified mockup-like)
+    const rhythmValue = currentMonthExpense;
+    const previousMonthTotal = transactions
+      .filter(t => t.type === 'expense' && !String(t.date).startsWith(filterMonth))
+      .reduce((s, t) => s + t.amount, 0) / 12; // hypothetical avg or prev month
+    
+    const diff = rhythmValue - previousMonthTotal;
+    const diffPct = previousMonthTotal > 0 ? (diff / previousMonthTotal) * 100 : 0;
+
+    // Upcoming Bills (Subscriptions + soon-to-be installments)
+    const upcomingBills = [
+      ...subscriptions.filter(s => s.isActive).map(s => ({ ...s, source: 'Assinatura', type: 'sub' })),
+      // Logic for next installments could be added here
+    ].slice(0, 3);
+
+    return (
+      <div className="interactive-layout animate-fade-in hub-container">
+        <div className="interactive-main-grid">
+          {/* Greeting Hero */}
+          <div className="greeting-hero">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+               <div>
+                  <h1 className="greeting-title">Bora trocar uma ideia com sua grana?</h1>
+                  <p className="greeting-text">
+                    {userName}, suas despesas com <span style={{ color: '#10b981', fontWeight: 'bold' }}>{topCat.toLowerCase()}</span> {currentMonthExpense > 2000 ? 'estão um pouco altas este mês' : 'estão sob controle'}! 
+                    Fica de olho pra não perder o equilíbrio.
+                  </p>
+               </div>
+               <div className="score-badge-large">
+                  <div className="score-val">{healthScore}</div>
+                  <div className="score-label">Fync Score</div>
+               </div>
+            </div>
+
+            <div className="hero-stats-row">
+              <div className="hero-mini-card">
+                <div className="mini-card-label">Gasto em {new Date().toLocaleString('pt-BR', { month: 'long' })}</div>
+                <div className="mini-card-value">{formatCurrency(currentMonthExpense)}</div>
+              </div>
+              <div className="hero-mini-card">
+                <div className="mini-card-label">Vs. Mês Anterior</div>
+                <div className="mini-card-value" style={{ color: diffPct > 0 ? '#ef4444' : '#10b981' }}>
+                  {diffPct > 0 ? '+' : ''}{diffPct.toFixed(0)}%
+                </div>
+              </div>
+              <div className="hero-mini-card">
+                <div className="mini-card-label">Principais Metas</div>
+                <div className="mini-card-value" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Target size={14} className="text-primary" /> {goals.length} ativas
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="hub-sidebar-widgets">
+              {/* Upcoming Card */}
+              <div className="modern-list-card glass-panel upcoming-widget">
+                 <h3 className="widget-title">Próximos Vencimentos</h3>
+                 <div className="upcoming-list">
+                    {upcomingBills.length > 0 ? upcomingBills.map((bill, i) => (
+                      <div key={i} className="upcoming-item">
+                         <div className="bill-icon"><Clock size={14} /></div>
+                         <div className="bill-info">
+                            <div className="bill-name">{bill.name}</div>
+                            <div className="bill-date">Dia {bill.billingDay}</div>
+                         </div>
+                         <div className="bill-amount">{formatCurrency(bill.amount)}</div>
+                      </div>
+                    )) : <div className="text-muted text-sm">Tudo em dia!</div>}
+                 </div>
+                 <button className="btn-link-sm" onClick={() => setActiveTab('subscriptions')}>Ver tudo</button>
+              </div>
+
+              {/* Goals Card */}
+              <div className="modern-list-card glass-panel goals-widget">
+                 <h3 className="widget-title">Suas Metas</h3>
+                 <div className="goals-mini-list">
+                    {goals.slice(0, 2).map((goal, i) => {
+                      const pct = Math.min((goal.currentAmount / goal.targetAmount) * 100, 100);
+                      return (
+                        <div key={i} className="goal-mini-item">
+                           <div className="flex justify-between text-xs mb-1">
+                              <span>{goal.title}</span>
+                              <span className="font-bold">{pct.toFixed(0)}%</span>
+                           </div>
+                           <div className="mini-progress-bg">
+                              <div className="mini-progress-fill" style={{ width: `${pct}%`, background: goal.color }}></div>
+                           </div>
+                        </div>
+                      );
+                    })}
+                 </div>
+              </div>
+          </div>
+        </div>
+
+        {/* Central Hub Grid */}
+        <div className="hub-central-grid">
+           {/* Ritmo de Gastos Card */}
+           <div className="ritmo-card glass-panel">
+            <div className="ritmo-header">
+              <div>
+                <div className="ritmo-label">Ritmo de Gastos</div>
+                <div className="ritmo-value">
+                  {formatCurrency(rhythmValue)}
+                  <span style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.4)', fontWeight: 400, marginLeft: '8px' }}>consumidos</span>
+                </div>
+              </div>
+              <button className="btn-icon" onClick={() => setActiveTab('transactions')} style={{ fontSize: '0.75rem', color: '#10b981' }}>
+                Extrato <ArrowUpRight size={14} />
               </button>
             </div>
-          )}
 
-          <button 
-            className="btn-icon" 
-            onClick={() => {
-              const allIds = filteredTransactions.map(t => t.id);
-              if (selectedIds.length === allIds.length) setSelectedIds([]);
-              else setSelectedIds(allIds);
-            }}
-            title="Selecionar Tudo"
-            style={{ color: selectedIds.length > 0 && selectedIds.length === filteredTransactions.length ? 'var(--primary-color)' : 'inherit' }}
-          >
-            <CheckCircle2 size={22} />
-          </button>
+            <div style={{ width: '100%', height: 180, marginTop: '1rem' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={dynamicFlowData}>
+                  <defs>
+                    <linearGradient id="ritmoColor" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="name" hide />
+                  <YAxis hide />
+                  <RechartsTooltip contentStyle={{ backgroundColor: '#171923', border: 'none', borderRadius: '12px' }} />
+                  <Area 
+                    type="monotone" 
+                    dataKey="Despesas" 
+                    stroke="#ef4444" 
+                    strokeWidth={3}
+                    fillOpacity={1} 
+                    fill="url(#ritmoColor)" 
+                    dot={{ r: 4, fill: '#ef4444', strokeWidth: 2, stroke: '#fff' }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
 
-          <button className="btn-icon" onClick={() => setIsTxFullscreen(!isTxFullscreen)} title="Alternar Tela Cheia">
-            {isTxFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
-          </button>
+          {/* Budgets Widget */}
+          <div className="modern-list-card glass-panel budget-hub-widget">
+             <div className="flex justify-between items-center mb-4">
+                <h3 className="widget-title">Orçamentos Limites</h3>
+                <span className="text-xs text-muted">Mês Atual</span>
+             </div>
+             <div className="budget-mini-grid">
+                {CATEGORIES.slice(0, 4).map(cat => {
+                  const limit = budgets[cat.id] || 1000;
+                  const used = dynamicCategoryData.find(d => d.name === cat.id)?.value || 0;
+                  const pct = (used / limit) * 100;
+                  return (
+                    <div key={cat.id} className="budget-mini-item">
+                       <div className="flex justify-between mb-1">
+                          <span className="text-xs">{cat.id}</span>
+                          <span className="text-xs font-bold">{pct.toFixed(0)}%</span>
+                       </div>
+                       <div className="mini-progress-bg">
+                          <div className="mini-progress-fill" style={{ width: `${Math.min(pct, 100)}%`, background: pct > 100 ? '#ef4444' : '#10b981' }}></div>
+                       </div>
+                    </div>
+                  );
+                })}
+             </div>
+          </div>
+        </div>
+
+        {/* Bottom Wallets and Credit Card Section */}
+        <div className="bottom-sections-grid">
+          <div className="modern-list-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3 className="modern-title" style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', fontWeight: 600 }}>Contas Correntes</h3>
+              <button className="btn-icon" onClick={() => setActiveTab('wallets')}><Maximize2 size={16} /></button>
+            </div>
+            
+            <div className="account-list">
+              {wallets.filter(w => w.type === 'checking').map(w => (
+                <div key={w.id} className="account-item">
+                  <div className="account-main">
+                    <div className="account-icon-box" style={{ background: '#8a05be' }}>
+                      <Wallet size={20} style={{ color: '#fff' }} />
+                    </div>
+                    <div>
+                      <div className="account-name">{w.name}</div>
+                      <div className="account-type">Conta corrente</div>
+                    </div>
+                  </div>
+                  <div className="account-balance">{formatCurrency(w.dynamicBalance)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="modern-list-card">
+             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3 className="modern-title" style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', fontWeight: 600 }}>Cartões de Crédito</h3>
+              <button className="btn-icon" onClick={() => setActiveTab('wallets')} style={{ fontSize: '0.75rem', color: '#10b981' }}>
+                ver detalhes <ArrowUpRight size={14} />
+              </button>
+            </div>
+
+            {wallets.filter(w => w.type === 'credit').slice(0, 1).map(w => {
+              const limit = parseFloat(w.limit) || 0;
+              const used = Math.abs(parseFloat(w.dynamicBalance) || 0);
+              const available = limit - used;
+              const pct = limit > 0 ? (available / limit) * 100 : 0;
+              
+              return (
+                <div key={w.id}>
+                  <div className="ritmo-value" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{formatCurrency(available)}</div>
+                  <div className="text-muted text-sm">Disponível de {formatCurrency(limit)}</div>
+
+                  <div className="credit-progress-box">
+                    <div className="account-main" style={{ marginBottom: '1rem', marginTop: '1rem' }}>
+                      <div className="account-icon-box" style={{ background: '#8a05be' }}>
+                        <CreditCard size={18} style={{ color: '#fff' }} />
+                      </div>
+                      <div>
+                        <div className="account-name">{w.name}</div>
+                        <div className="account-type">Fechamento em 05 abr</div>
+                      </div>
+                    </div>
+
+                    <div className="custom-progress-bar">
+                      <div className="progress-fill" style={{ width: `${pct}%` }}></div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
-
-      <div style={{ overflowY: 'auto', overflowX: 'auto', flex: 1, maxHeight: isTxFullscreen ? 'none' : '450px' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
-              <th style={{ padding: '1rem', width: '40px' }}></th>
-              <th style={{ padding: '1rem', textAlign: 'left' }}>Data</th>
-              <th style={{ padding: '1rem', textAlign: 'left' }}>Descrição</th>
-              <th style={{ padding: '1rem', textAlign: 'left' }}>Conta</th>
-              <th style={{ padding: '1rem', textAlign: 'left' }}>Categoria</th>
-              <th style={{ padding: '1rem', textAlign: 'right' }}>Valor</th>
-              <th style={{ padding: '1rem', textAlign: 'right' }}>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(isTxFullscreen ? filteredTransactions : filteredTransactions.slice(0, 50)).map(t => (
-              <tr 
-                key={t.id} 
-                className="tx-row-clickable"
-                onClick={(e) => {
-                  // Don't toggle if clicking an action button or the checkbox itself (already handled by checkbox)
-                  if (e.target.closest('button') || e.target.type === 'checkbox') return;
-                  setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id]);
-                }}
-                style={{ 
-                  borderBottom: '1px solid var(--border-color)', 
-                  background: selectedIds.includes(t.id) ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
-                  transition: 'all 0.2s'
-                }}
-              >
-                <td style={{ padding: '1rem' }}>
-                  <input 
-                    type="checkbox" 
-                    style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
-                    checked={selectedIds.includes(t.id)} 
-                    onChange={() => setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id])} 
-                  />
-                </td>
-                <td style={{ padding: '1rem', whiteSpace: 'nowrap', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                  {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Sem Data'}
-                </td>
-                <td style={{ padding: '1rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{t.title}</div>
-                    {t.isProjected && (
-                      <span style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary-color)', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Previsto
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  {wallets.find(w => w.id === t.walletId)?.name || 'N/A'}
-                </td>
-                <td style={{ padding: '1rem' }}>
-                  <span className="category-tag">{t.category}</span>
-                </td>
-                <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 700, color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)' }}>
-                  {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
-                </td>
-                <td style={{ padding: '1rem', textAlign: 'right' }}>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                    <button className="btn-icon" onClick={() => openEditTransaction(t)}><Edit2 size={16} /></button>
-                    <button className="btn-icon" onClick={() => deleteTransaction(t.id)}><Trash2 size={16} /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filteredTransactions.length === 0 && (
-          <div className="text-center text-muted" style={{ padding: '3rem' }}>Nenhum lançamento encontrado.</div>
-        )}
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderOverview = () => (
     <div className={`animate-fade-in ${isTxFullscreen ? 'tx-fullscreen-view' : ''}`}>
@@ -1618,6 +2022,224 @@ export default function Dashboard() {
       { name: 'Despesas', value: totals.expense }
     ];
   }, [filteredTransactions, excludedCategories]);
+  const renderInstallments = () => {
+    // Group transactions by "Installment Group" (matching titles or same shop)
+    // For this POC, we group by unique combination of Title (without the X/Y part) and Amount (approx)
+    const installmentGroups = transactions.reduce((acc, t) => {
+      const info = parseInstallment(t.title);
+      if (info.isInstallment && t.type === 'expense') {
+        const baseTitle = t.title.replace(/(\d+)\s*[/]\s*(\d+)/, '').replace(/parcela\s*(\d+)\s*de\s*(\d+)/i, '').trim();
+        const key = `${baseTitle}-${t.category}`;
+        if (!acc[key]) {
+          acc[key] = {
+            id: key,
+            title: baseTitle,
+            category: t.category,
+            totalInstallments: info.total,
+            installments: [],
+            walletId: t.walletId,
+            totalValue: 0,
+            paidValue: 0,
+          };
+        }
+        acc[key].installments.push({ ...t, current: info.current });
+        acc[key].totalValue = acc[key].totalInstallments * t.amount; // assuming equal installments
+      }
+      return acc;
+    }, {});
+
+    const groups = Object.values(installmentGroups).map(g => {
+      // Sort installments by number
+      g.installments.sort((a, b) => a.current - b.current);
+      const latest = g.installments[g.installments.length - 1];
+      g.currentInstallment = latest.current;
+      g.monthlyAmount = latest.amount;
+      g.paidValue = g.installments.reduce((s, i) => s + i.amount, 0);
+      g.totalValue = g.totalInstallments * g.monthlyAmount;
+      g.remainingValue = Math.max(0, g.totalValue - g.paidValue);
+      g.progress = (g.currentInstallment / g.totalInstallments) * 100;
+      g.isFinalized = g.currentInstallment >= g.totalInstallments;
+      return g;
+    });
+
+    const activeGroups = groups.filter(g => !g.isFinalized);
+    const finalizedGroups = groups.filter(g => g.isFinalized);
+    const visibleGroups = activeInstallmentTab === 'active' ? activeGroups : finalizedGroups;
+
+    const summary = groups.reduce((acc, g) => {
+      acc.total += g.totalValue;
+      acc.paid += g.paidValue;
+      acc.remaining += g.remainingValue;
+      if (!g.isFinalized) acc.activeCount += 1;
+      else acc.finalizedCount += 1;
+      return acc;
+    }, { total: 0, paid: 0, remaining: 0, activeCount: 0, finalizedCount: 0 });
+
+    const overallProgress = summary.total > 0 ? (summary.paid / summary.total) * 100 : 0;
+
+    return (
+      <div className="animate-fade-in parcelamentos-container">
+        {/* Fync Redesigned Summary Card */}
+        <div className="fync-parcelas-hero glass-panel">
+          <div className="hero-main-info">
+            <div className="hero-label">TOTAL EM ABERTO</div>
+            <div className="hero-value">{formatCurrency(summary.remaining)}</div>
+            <div className="hero-progress-track">
+              <div className="hero-progress-fill" style={{ width: `${overallProgress}%` }}></div>
+            </div>
+            <div className="hero-progress-stats">
+              <span>{overallProgress.toFixed(0)}% das parcelas pagas</span>
+              <span><Calendar size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Última em Dez/26</span>
+            </div>
+          </div>
+          <div className="hero-side-stats">
+            <div className="side-stat">
+              <span className="side-label">VALOR TOTAL</span>
+              <span className="side-val">{formatCurrency(summary.total)}</span>
+            </div>
+            <div className="side-stat">
+              <span className="side-label">JÁ PAGO</span>
+              <span className="side-val text-success">{formatCurrency(summary.paid)}</span>
+            </div>
+            <div className="side-stat">
+              <span className="side-label">COMPRAS</span>
+              <span className="side-val">{summary.activeCount}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Filter Tabs Refined */}
+        <div className="pierre-filters" style={{ marginBottom: '1.5rem' }}>
+          <button 
+            className={`btn-pill ${activeInstallmentTab === 'active' ? 'active' : ''}`}
+            onClick={() => setActiveInstallmentTab('active')}
+          >
+            Em andamento ({summary.activeCount})
+          </button>
+          <button 
+            className={`btn-pill ${activeInstallmentTab === 'finalized' ? 'active' : ''}`}
+            onClick={() => setActiveInstallmentTab('finalized')}
+          >
+            Finalizadas ({summary.finalizedCount})
+          </button>
+        </div>
+
+        {/* Redesigned Installment List */}
+        <div className="fync-installment-grid">
+          {visibleGroups.map(group => {
+            const { icon: StoreIcon, color: iconColor, domain, isBrand } = getStoreIcon(group.title);
+            const isExpanded = expandedInstallmentId === group.id;
+
+            return (
+              <div key={group.id} className={`fync-installment-card glass-panel ${isExpanded ? 'active' : ''}`}>
+                <div className="card-main-content" onClick={() => setExpandedInstallmentId(isExpanded ? null : group.id)}>
+                  <div className="card-side-badge">
+                     <div className={`store-badge-circle ${isBrand ? 'brand-logo' : ''}`} style={{ backgroundColor: isBrand ? '#fff' : iconColor }}>
+                        {isBrand ? (
+                          <img 
+                            src={`https://logo.clearbit.com/${domain}?size=64`} 
+                            alt={group.title}
+                            className="brand-logo-img"
+                            onError={(e) => {
+                              // If Clearbit fails, fallback to high-res favicon or simple icon
+                              e.target.onerror = null;
+                              e.target.src = `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
+                            }}
+                          />
+                        ) : (
+                          <StoreIcon size={22} color="#fff" />
+                        )}
+                     </div>
+                     <div className="badge-connection-line"></div>
+                  </div>
+                  
+                  <div className="card-core-info">
+                    <div className="card-title-row">
+                      <h3 className="card-title">{group.title}</h3>
+                      <span className={`fync-status-pill ${group.isFinalized ? 'finalized' : 'active'}`}>
+                        {group.isFinalized ? 'Concluído' : 'Ativo'}
+                      </span>
+                    </div>
+                    <div className="card-meta-row">
+                      <span className="meta-tag">{group.category}</span>
+                      <span className="meta-separator">•</span>
+                      <span className="meta-val">{group.currentInstallment}/{group.totalInstallments} parcelas</span>
+                      <span className="meta-separator">•</span>
+                      <span className="meta-val">{formatCurrency(group.monthlyAmount)}/mês</span>
+                    </div>
+                  </div>
+
+                  <div className="card-action-info">
+                    <div className="card-amount-total">
+                      <span className="amount-label">{group.isFinalized ? 'Valor Total' : 'Restante'}</span>
+                      <span className="amount-value">{formatCurrency(group.isFinalized ? group.totalValue : group.remainingValue)}</span>
+                    </div>
+                    <ChevronDown className={`chevron-fync ${isExpanded ? 'open' : ''}`} size={18} />
+                  </div>
+                </div>
+
+                <div className="card-sub-progress">
+                  <div className="fync-progress-bg">
+                    <div className="fync-progress-fill" style={{ width: `${group.progress}%` }}></div>
+                  </div>
+                </div>
+
+                <AnimatePresence>
+                  {isExpanded && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="fync-expanded-zone"
+                    >
+                      <div className="expanded-stats-grid">
+                        <div className="exp-stat">
+                          <span className="exp-label">Total</span>
+                          <span className="exp-val">{formatCurrency(group.totalValue)}</span>
+                        </div>
+                        <div className="exp-stat">
+                          <span className="exp-label">Pago até agora</span>
+                          <span className="exp-val text-success">{formatCurrency(group.paidValue)}</span>
+                        </div>
+                        <div className="exp-stat">
+                          <span className="exp-label">Progresso</span>
+                          <span className="exp-val">{group.progress.toFixed(0)}%</span>
+                        </div>
+                      </div>
+
+                      <div className="fync-timeline-list">
+                        <div className="timeline-header">Fluxo de Pagamento</div>
+                        {[...Array(group.totalInstallments)].map((_, idx) => {
+                          const n = idx + 1;
+                          const isPaid = n <= group.currentInstallment;
+                          // Estimate month logic
+                          const date = new Date();
+                          date.setMonth(date.getMonth() - (group.currentInstallment - n));
+                          const monthStr = date.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+
+                          return (
+                            <div key={n} className={`fync-timeline-row ${isPaid ? 'paid' : ''}`}>
+                              <div className="timeline-marker">
+                                {isPaid ? <CheckCircle2 size={14} className="text-success" /> : <div className="marker-dot" />}
+                              </div>
+                              <div className="timeline-n">{n}ª parcela</div>
+                              <div className="timeline-m">{monthStr}</div>
+                              <div className="timeline-v">{formatCurrency(group.monthlyAmount)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const renderReports = () => (
     <div className={`animate-fade-in ${isTxFullscreen ? 'tx-fullscreen-view' : ''}`}>
       {!isTxFullscreen && (
@@ -1840,6 +2462,14 @@ export default function Dashboard() {
             <p className="dashboard-subtitle">Histórico completo · <span className="text-primary font-medium">{getDisplaySubtitle()}</span></p>
           </div>
           <div className="flex gap-2">
+            <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".ofx" style={{ display: 'none' }} />
+            <button 
+              className="btn btn-secondary" 
+              onClick={() => fileInputRef.current && fileInputRef.current.click()} 
+              style={{ background: 'rgba(59, 130, 246, 0.1)', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}
+            >
+              <UploadCloud size={18} /> Importar OFX
+            </button>
             <button className="btn btn-secondary" onClick={handleExportPDF}>
               <FileDown size={18} className="text-danger" /> PDF
             </button>
@@ -2660,55 +3290,160 @@ export default function Dashboard() {
   };
 
   const renderSubscriptions = () => {
+    // Calculate Summary Stats
+    const activeSubs = subscriptions.filter(s => s.isActive);
+    const totalMonthly = activeSubs.reduce((sum, s) => sum + s.amount, 0);
+    const totalYearly = totalMonthly * 12;
+    const activeCount = activeSubs.length;
+    const averagePerSub = activeCount > 0 ? totalMonthly / activeCount : 0;
+
+    // Filtered list
+    const filteredSubs = subscriptions.filter(s => {
+      if (activeSubTab === 'active') return s.isActive;
+      if (activeSubTab === 'inactive') return !s.isActive;
+      return true;
+    });
+
     return (
       <div className="animate-fade-in">
         <div className="dashboard-header">
           <div>
             <h1 className="dashboard-title">Assinaturas e Recorrências</h1>
-            <p className="dashboard-subtitle">Controle seus serviços fixos e mensais (Netflix, Spotify, Condomínio).</p>
+            <p className="dashboard-subtitle">Gestão inteligente de serviços fixos e mensais.</p>
           </div>
           <button className="btn btn-primary" onClick={openSubModal}><Plus size={18} /> Nova Assinatura</button>
         </div>
 
-        <div className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-xl)' }}>
-          {subscriptions.length === 0 ? (
-            <div className="text-center text-muted py-8">Você ainda não castrou nenhuma assinatura.</div>
-          ) : (
-             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
-              {subscriptions.map(sub => (
-                <div key={sub.id} style={{ 
-                  background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', 
-                  borderRadius: 'var(--radius-lg)', padding: '1.5rem', position: 'relative',
-                  opacity: sub.isActive ? 1 : 0.5 
-                }}>
-                   <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '0.5rem' }}>
-                      <button className="btn-icon" title="Editar Assinatura" onClick={() => {
-                        setEditSubTarget(sub);
-                        setEditSubName(sub.name);
-                        setEditSubAmount(sub.amount.toString());
-                        setEditSubCategory(sub.category || 'Lazer');
-                        setEditSubBillingDay(sub.billingDay);
-                        setIsEditSubModalOpen(true);
-                      }}><Edit2 size={16} className="text-primary"/></button>
-                      <button className="btn-icon" onClick={() => deleteSubscription(sub.id)} title="Excluir Definitivamente"><Trash2 size={16} className="text-danger"/></button>
-                   </div>
-                   <div className="flex items-center gap-2 mb-2">
-                     <Repeat className="text-primary"/>
-                     <span className="font-bold text-lg">{sub.name}</span>
-                   </div>
-                   <div className="text-2xl font-bold font-display my-2">{formatCurrency(sub.amount)}</div>
-                   <div className="text-sm text-muted mb-4">Vencimento: Dia {sub.billingDay}</div>
-                   
-                   <button 
-                     className={`btn w-full ${sub.isActive ? 'btn-secondary' : 'btn-primary'}`} 
-                     onClick={() => toggleSubscription(sub.id, !sub.isActive)}
-                   >
-                     {sub.isActive ? 'Pausar Assinatura' : 'Reativar Assinatura'}
-                   </button>
-                </div>
-              ))}
+        {/* Fync Premium Subs Hero */}
+        <div className="fync-subs-hero glass-panel">
+          <div className="hero-main-info">
+            <span className="hero-label">GASTO MENSAL TOTAL</span>
+            <div className="hero-value">{formatCurrency(totalMonthly)}</div>
+            <div className="hero-progress-track">
+              <div className="hero-progress-fill" style={{ width: '100%', opacity: 0.8 }}></div>
+            </div>
+            <div className="hero-progress-stats">
+              <span>Faturamento recorrente do mês atual</span>
+              <span><Clock size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Atualizado agora</span>
+            </div>
+          </div>
+          <div className="hero-side-stats">
+            <div className="side-stat">
+              <span className="side-label">PROJEÇÃO ANUAL</span>
+              <span className="side-val text-warning">{formatCurrency(totalYearly)}</span>
+            </div>
+            <div className="side-stat">
+              <span className="side-label">SERVIÇOS ATIVOS</span>
+              <span className="side-val">{activeCount}</span>
+            </div>
+            <div className="side-stat">
+              <span className="side-label">MÉDIA POR SERVIÇO</span>
+              <span className="side-val text-success">{formatCurrency(averagePerSub)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Filter Tabs Refined */}
+        <div className="pierre-filters" style={{ marginBottom: '1.5rem' }}>
+          <button 
+            className={`btn-pill ${activeSubTab === 'all' ? 'active' : ''}`}
+            onClick={() => setActiveSubTab('all')}
+          >
+            Todas ({subscriptions.length})
+          </button>
+          <button 
+            className={`btn-pill ${activeSubTab === 'active' ? 'active' : ''}`}
+            onClick={() => setActiveSubTab('active')}
+          >
+            Ativas ({activeCount})
+          </button>
+          <button 
+            className={`btn-pill ${activeSubTab === 'inactive' ? 'active' : ''}`}
+            onClick={() => setActiveSubTab('inactive')}
+          >
+            Inativas ({subscriptions.length - activeCount})
+          </button>
+        </div>
+
+        {/* Redesigned Subscription List */}
+        <div className="fync-installment-grid">
+           {filteredSubs.length === 0 ? (
+             <div className="glass-panel text-center text-muted py-12" style={{ borderRadius: 'var(--radius-xl)' }}>
+               Nenhuma assinatura encontrada nesta categoria.
              </div>
-          )}
+           ) : (
+             filteredSubs.map(sub => {
+               const { domain, isBrand, icon: FallbackIcon, color: iconColor } = getStoreIcon(sub.name);
+               
+               return (
+                 <div key={sub.id} className={`fync-installment-card glass-panel ${!sub.isActive ? 'inactive-sub' : ''}`} style={{ opacity: sub.isActive ? 1 : 0.7 }}>
+                   <div className="card-main-content">
+                     <div className="card-side-badge">
+                        <div className={`store-badge-circle ${isBrand ? 'brand-logo' : ''}`} style={{ backgroundColor: isBrand ? '#fff' : iconColor }}>
+                           {isBrand ? (
+                             <img 
+                               src={`https://logo.clearbit.com/${domain}?size=64`} 
+                               alt={sub.name}
+                               className="brand-logo-img"
+                               onError={(e) => {
+                                 e.target.onerror = null;
+                                 e.target.src = `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
+                               }}
+                             />
+                           ) : (
+                             <FallbackIcon size={22} color="#fff" />
+                           )}
+                        </div>
+                        <div className="badge-connection-line"></div>
+                     </div>
+                     
+                     <div className="card-core-info">
+                       <div className="card-title-row">
+                         <h3 className="card-title">{sub.name}</h3>
+                         <span className={`fync-status-pill ${sub.isActive ? 'active' : 'finalized'}`}>
+                           {sub.isActive ? 'Ativo' : 'Pausado'}
+                         </span>
+                       </div>
+                       <div className="card-meta-row">
+                         <span className="meta-tag">{sub.category || 'Serviço'}</span>
+                         <span className="meta-separator">•</span>
+                         <span className="meta-val">Vence dia {sub.billingDay}</span>
+                         <span className="meta-separator">•</span>
+                         <span className="meta-val">{sub.isActive ? 'Próximo débito em breve' : 'Assinatura inativa'}</span>
+                       </div>
+                     </div>
+
+                     <div className="card-action-info" style={{ gap: '1rem' }}>
+                       <div className="card-amount-total">
+                         <span className="amount-label">Valor Mensal</span>
+                         <span className="amount-value">{formatCurrency(sub.amount)}</span>
+                       </div>
+                       
+                       <div style={{ display: 'flex', gap: '8px' }}>
+                          <button 
+                            className="btn-icon circle-btn" 
+                            title={sub.isActive ? 'Pausar' : 'Ativar'}
+                            onClick={() => toggleSubscription(sub.id, !sub.isActive)}
+                            style={{ background: sub.isActive ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)' }}
+                          >
+                            {sub.isActive ? <Pause size={16} className="text-danger" /> : <Play size={16} className="text-success" />}
+                          </button>
+                          <button className="btn-icon circle-btn" onClick={() => {
+                            setEditSubTarget(sub);
+                            setEditSubName(sub.name);
+                            setEditSubAmount(sub.amount.toString());
+                            setEditSubCategory(sub.category || 'Lazer');
+                            setEditSubBillingDay(sub.billingDay);
+                            setIsEditSubModalOpen(true);
+                          }}><Edit2 size={16} /></button>
+                          <button className="btn-icon circle-btn" onClick={() => askConfirmation('Excluir Assinatura', 'Tem certeza que deseja remover esta assinatura definitivamente?', () => deleteSubscription(sub.id))}><Trash2 size={16} className="text-danger" /></button>
+                       </div>
+                     </div>
+                   </div>
+                 </div>
+               );
+             })
+           )}
         </div>
       </div>
     );
@@ -2906,6 +3641,14 @@ export default function Dashboard() {
               >
                 {savingSettings ? 'Salvando...' : 'Salvar Alterações'}
               </button>
+              <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.05)', textAlign: 'center' }}>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>
+                  Fync Dashboard <span className="text-primary font-bold">v1.2.0</span>
+                </p>
+                <p style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.2)', marginTop: '4px' }}>
+                  A Versão da Inteligência • 2026
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -2983,155 +3726,72 @@ export default function Dashboard() {
   // ------------------------------------------
 
   return (
-    <div className={`dashboard-layout ${isSidebarOpen ? 'sidebar-open' : ''}`}>
-      {/* Sidebar Overlay for mobile */}
-      {isSidebarOpen && <div className="sidebar-overlay" onClick={() => setIsSidebarOpen(false)}></div>}
-
-      {!isTxFullscreen && (
-        <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
-          <div className="sidebar-header">
-            <div className="sidebar-logo">
-              <img src="/logo.png" alt="Fync Logo" style={{ width: '28px', height: '28px', objectFit: 'contain' }} /> 
-              Fync
+    <div className="dashboard-layout">
+      {/* Top Search & Actions Header (Mockup Profile Section) */}
+      <div className="top-right-actions">
+        <div className="header-search" style={{ width: '240px' }}>
+          <Search className="search-icon" size={16} />
+          <input type="text" className="search-input" placeholder="Buscar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ padding: '0.4rem 1rem 0.4rem 2.5rem', fontSize: '0.8rem' }} />
+        </div>
+        
+        {/* User Profile Dropdown */}
+        <div className="relative-container">
+          <div className="profile-circle" onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
+            <div className="user-avatar" style={{ background: accentColor, width: '100%', height: '100%', borderRadius: '0' }}>
+              {(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}
             </div>
           </div>
-          <nav className="sidebar-nav">
-            <div className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => { setActiveTab('overview'); setIsSidebarOpen(false); }}><LayoutDashboard size={20} /> Visão Geral</div>
-            <div className={`nav-item ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => { setActiveTab('transactions'); setIsSidebarOpen(false); }}><FileText size={20} /> Lançamentos</div>
-            <div className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }}><PieChart size={20} /> Relatórios</div>
-            <div className={`nav-item ${activeTab === 'investments' ? 'active' : ''}`} onClick={() => { setActiveTab('investments'); setIsSidebarOpen(false); }}><TrendingUp size={20} /> Investimentos</div>
-            <div className={`nav-item ${activeTab === 'subscriptions' ? 'active' : ''}`} onClick={() => { setActiveTab('subscriptions'); setIsSidebarOpen(false); }}><Repeat size={20} /> Assinaturas</div>
-            <div className={`nav-item ${activeTab === 'goals' ? 'active' : ''}`} onClick={() => { setActiveTab('goals'); setIsSidebarOpen(false); }}><Target size={20} /> Metas</div>
-            <div className={`nav-item ${activeTab === 'wallets' ? 'active' : ''}`} onClick={() => { setActiveTab('wallets'); setIsSidebarOpen(false); }}><CreditCard size={20} /> Carteiras</div>
-            <div className={`nav-item ${activeTab === 'ai' ? 'active' : ''}`} onClick={() => { setActiveTab('ai'); setIsSidebarOpen(false); }} style={activeTab === 'ai' ? {} : { position: 'relative' }}>
-              <Sparkles size={20} /> Fync AI
-              {activeTab !== 'ai' && (
-                <span style={{ marginLeft: 'auto', fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: '9999px', background: 'linear-gradient(135deg,#6366f1,#818cf8)', color: 'white', letterSpacing: '0.02em' }}>NOVO</span>
-              )}
+
+          {isProfileOpen && (
+            <div className="header-dropdown glass-panel profile-dropdown" style={{ top: 'calc(100% + 15px)' }}>
+              <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
+                <User size={16} /> Meu Perfil
+              </div>
+              <div className="header-dropdown-item" onClick={logout}>
+                <LogOut size={16} /> Sair
+              </div>
             </div>
-            <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }}><Settings size={20} /> Configurações</div>
-          </nav>
-          <div className="sidebar-footer">
-            <div className="nav-item" onClick={logout}><LogOut size={20} /> Sair</div>
+          )}
+        </div>
+      </div>
+
+      <main className="main-content" style={{ overflowY: 'auto' }}>
+        <div className="interactive-layout-container">
+          {/* Top Pill Navigation */}
+          <div className="top-tabs-nav" style={{ marginTop: '2rem' }}>
+            <button className={`tab-pill ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}><LayoutDashboard size={16} /> Visão geral</button>
+            <button className={`tab-pill ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}><Repeat size={16} /> Transações</button>
+            <button className={`tab-pill ${activeTab === 'parcelamentos' ? 'active' : ''}`} onClick={() => setActiveTab('parcelamentos')}><CalendarDays size={16} /> Parcelamentos</button>
+            <button className={`tab-pill ${activeTab === 'subscriptions' ? 'active' : ''}`} onClick={() => setActiveTab('subscriptions')}><RefreshCw size={16} /> Assinaturas</button>
+            <button className={`tab-pill ${activeTab === 'goals' ? 'active' : ''}`} onClick={() => setActiveTab('goals')}><PieChart size={16} /> Categorias</button>
+            <button className={`tab-pill ${activeTab === 'wallets' ? 'active' : ''}`} onClick={() => setActiveTab('wallets')}><CreditCard size={16} /> Cartões</button>
+            <button className={`tab-pill ${activeTab === 'investments' ? 'active' : ''}`} onClick={() => setActiveTab('investments')}><TrendingUp size={16} /> Investimentos</button>
+            <button className={`tab-pill ${activeTab === 'ai' ? 'active' : ''}`} onClick={() => setActiveTab('ai')}><Activity size={16} /> Dívidas</button>
           </div>
-        </aside>
-      )}
 
-      {/* Main Content */}
-      <main className="main-content">
-        {!isTxFullscreen && (
-          <header className="top-header">
-            <div className="flex items-center gap-4">
-              <button className="menu-toggle btn-icon" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
-                <Menu size={24} />
-              </button>
-              <div className="header-search">
-                <Search className="search-icon" size={18} />
-                <input type="text" className="search-input" placeholder="Buscar lançamentos..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-              </div>
-            </div>
-            <div className="header-actions">
-              
-              {/* Notification Dropdown */}
-              <div className="relative-container">
-                <button className="btn-icon" onClick={() => { setIsNotifOpen(!isNotifOpen); setIsProfileOpen(false); }}>
-                  <Bell size={20} />
-                  {activeNotifs.length > 0 && <span className="notif-badge"></span>}
-                </button>
-                
-                {isNotifOpen && (
-                  <div className="header-dropdown glass-panel">
-                    <div className="header-dropdown-title flex items-center justify-between">
-                      <span>Notificações</span>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{activeNotifs.length} novas</span>
-                    </div>
-                    
-                    {activeNotifs.length === 0 ? (
-                      <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                        Você não tem notificações novas.
-                      </div>
-                    ) : (
-                      activeNotifs.map(notif => (
-                        <div key={notif.id} className="header-dropdown-item" onClick={() => handleNotifClick(notif)}>
-                          <div className="notif-icon" style={{ 
-                            background: notif.type === 'danger' ? 'rgba(239, 68, 68, 0.1)' : notif.type === 'warning' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(16, 185, 129, 0.1)', 
-                            color: notif.type === 'danger' ? 'var(--danger-color)' : notif.type === 'warning' ? '#f59e0b' : 'var(--success-color)' 
-                          }}>
-                            {notif.icon}
-                          </div>
-                          <div>
-                            <p style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>{notif.title}</p>
-                            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{notif.desc}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* User Profile Dropdown */}
-              <div className="relative-container">
-                <div className="user-profile" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }} onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
-                  <div className="user-info text-right" style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span className="font-medium text-sm">{currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0]}</span>
-                  </div>
-                  <div className="user-avatar" style={{ background: accentColor }}>{(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}</div>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+            >
+              {activeTab === 'overview' ? renderInteractiveOverview() : (
+                <div style={{ padding: '0 2rem' }}>
+                  {activeTab === 'transactions' && renderTransactions()}
+                  {activeTab === 'parcelamentos' && renderInstallments()}
+                  {activeTab === 'reports' && renderReports()}
+                  {activeTab === 'investments' && renderInvestments()}
+                  {activeTab === 'subscriptions' && renderSubscriptions()}
+                  {activeTab === 'goals' && renderGoals()}
+                  {activeTab === 'wallets' && renderWallets()}
+                  {activeTab === 'settings' && renderSettings()}
+                  {activeTab === 'ai' && <AiAssistant financialContext={aiFinancialContext} />}
                 </div>
-
-                {isProfileOpen && (
-                  <div className="header-dropdown glass-panel profile-dropdown">
-                    <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
-                      <User size={16} /> Meu Perfil
-                    </div>
-                    <div className="header-dropdown-item" onClick={() => { setActiveTab('settings'); setIsProfileOpen(false); }}>
-                      <Settings size={16} /> Configurações
-                    </div>
-                    <div className="dropdown-divider"></div>
-                    <div className="header-dropdown-item" onClick={() => { setActiveTab('subscriptions'); setIsProfileOpen(false); }}>
-                      <Shield size={16} /> Despesas Recorrentes
-                    </div>
-                    <div className="dropdown-divider"></div>
-                    <div className="header-dropdown-item text-danger" onClick={logout}>
-                      <LogOut size={16} /> Sair da Fync
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </header>
-        )}
-
-        <div className="dashboard-scroll-area">
-          {activeTab === 'overview' && renderOverview()}
-          {activeTab === 'transactions' && renderTransactions()}
-          {activeTab === 'reports' && renderReports()}
-          {activeTab === 'investments' && renderInvestments()}
-          {activeTab === 'subscriptions' && renderSubscriptions()}
-          {activeTab === 'goals' && renderGoals()}
-          {activeTab === 'wallets' && renderWallets()}
-          {activeTab === 'settings' && renderSettings()}
-          {activeTab === 'ai' && (() => {
-            // Build financial context
-            const expByCategory = (transactions || []).filter(t => t.type === 'expense').reduce((acc, t) => {
-              acc[t.category] = (acc[t.category] || 0) + t.amount;
-              return acc;
-            }, {});
-            const topCategories = Object.entries(expByCategory)
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 5)
-              .map(([name, total]) => ({ name, total }));
-            const ctx = {
-              totalBalance: (wallets || []).reduce((s, w) => s + (w.balance || 0), 0),
-              totalIncome: totals?.totalIncome || 0,
-              totalExpenses: totals?.totalExpenses || 0,
-              topCategories,
-              activeGoals: (goals || []).filter(g => (g.currentAmount || 0) < g.targetAmount),
-              activeSubscriptions: (subscriptions || []).filter(s => s.isActive),
-              wallets: wallets || [],
-            };
-            return <AiAssistant financialContext={ctx} />;
-          })()}
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </main>
 
@@ -3430,76 +4090,125 @@ export default function Dashboard() {
       {/* OFX Preview Modal */}
       {ofxPreview && (
         <div className="modal-overlay animate-fade-in" style={{ zIndex: 10000 }} onClick={() => setOfxPreview(null)}>
-          <div className="modal-content glass-panel" style={{ maxWidth: '700px', width: '90%' }} onClick={e => e.stopPropagation()}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '750px', width: '90%', position: 'relative', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+            
+            {/* Indicador de Carregamento da IA (Não-bloqueante) */}
+            <AnimatePresence>
+              {isAiCategorizing && (
+                <motion.div 
+                  initial={{ y: -50, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: -50, opacity: 0 }}
+                  style={{ 
+                    position: 'absolute', top: 0, left: 0, right: 0, 
+                    background: 'linear-gradient(90deg, var(--primary-color), #818cf8)',
+                    color: 'white', padding: '6px 1rem', display: 'flex', alignItems: 'center', 
+                    justifyContent: 'center', gap: '0.5rem', zIndex: 100, fontSize: '0.75rem', fontWeight: 600
+                  }}
+                >
+                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}>
+                    <Sparkles size={14} />
+                  </motion.div>
+                  O Finn está analisando seu extrato em segundo plano... ✨
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <div style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '0.5rem', borderRadius: 'var(--radius-md)' }}>
                   <UploadCloud size={20} className="text-primary" />
                 </div>
-                <h2>Pré-visualização do Extrato</h2>
+                <h2>Extrato Inteligente 🤖</h2>
               </div>
               <button type="button" className="btn-icon" onClick={() => setOfxPreview(null)}><X size={24} /></button>
             </div>
             
             <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              <div className="glass-panel" style={{ padding: '1rem', background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
-                <label className="input-label" style={{ marginBottom: '0.5rem' }}>Importar estas transações para qual conta?</label>
+              <div style={{ 
+                padding: '1rem', 
+                background: 'rgba(99, 102, 241, 0.08)', 
+                border: '1px solid rgba(99, 102, 241, 0.2)',
+                borderRadius: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '1rem'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <div style={{ background: '#6366f1', padding: '0.5rem', borderRadius: '10px' }}>
+                    <Wallet size={18} />
+                  </div>
+                  <div>
+                    <label className="input-label" style={{ margin: 0, fontSize: '0.75rem' }}>Importar para qual conta?</label>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Selecione o destino</div>
+                  </div>
+                </div>
                 <select 
                   className="input-field" 
                   value={ofxPreview.walletId} 
                   onChange={e => setOfxPreview({ ...ofxPreview, walletId: e.target.value })}
-                  style={{ background: '#1a1c2e' }}
+                  style={{ background: '#1a1c2e', width: 'auto', minWidth: '200px', border: '1px solid rgba(255,255,255,0.1)' }}
                 >
-                  <option value="">Selecione uma conta...</option>
+                  <option value="">Selecione...</option>
                   {wallets.map(w => (
                     <option key={w.id} value={w.id}>{w.name} ({w.type === 'credit' ? 'Cartão' : 'Corrente'})</option>
                   ))}
                 </select>
               </div>
 
-              <div style={{ maxHeight: '300px', overflowY: 'auto', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ maxHeight: '350px', overflowY: 'auto', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                  <thead style={{ background: 'rgba(255,255,255,0.03)', position: 'sticky', top: 0 }}>
+                  <thead style={{ background: '#161625', position: 'sticky', top: 0, zIndex: 2 }}>
                     <tr>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Data</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Descrição</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Categoria</th>
-                      <th style={{ padding: '0.75rem', textAlign: 'right' }}>Valor</th>
+                      <th style={{ padding: '1rem', textAlign: 'left', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>Data</th>
+                      <th style={{ padding: '1rem', textAlign: 'left', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>Descrição</th>
+                      <th style={{ padding: '1rem', textAlign: 'left', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>Categoria (✨ IA)</th>
+                      <th style={{ padding: '1rem', textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>Valor</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ofxPreview.items.map((item, idx) => (
                       <tr key={idx} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                        <td style={{ padding: '0.75rem' }}>{new Date(item.date).toLocaleDateString('pt-BR')}</td>
-                        <td style={{ padding: '0.75rem' }}>
-                          <div style={{ fontWeight: 500 }} title={item.title}>
+                        <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{new Date(item.date).toLocaleDateString('pt-BR')}</td>
+                        <td style={{ padding: '0.75rem 1rem' }}>
+                          <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' }} title={item.title}>
                             {item.title}
                           </div>
                         </td>
-                        <td style={{ padding: '0.75rem' }}>
-                          <select 
-                            style={{ 
-                              background: '#1a1c2e', 
-                              border: '1px solid rgba(255,255,255,0.1)', 
-                              color: 'white', 
-                              fontSize: '0.75rem',
-                              borderRadius: '4px',
-                              padding: '2px 4px',
-                              cursor: 'pointer'
-                            }}
-                            value={item.category}
-                            onChange={(e) => {
-                              const newItems = [...ofxPreview.items];
-                              newItems[idx].category = e.target.value;
-                              setOfxPreview({ ...ofxPreview, items: newItems });
-                            }}
-                          >
-                            {CATEGORIES.map(cat => (
-                              <option key={cat.id} value={cat.id}>{cat.id}</option>
-                            ))}
-                          </select>
+                        <td style={{ padding: '0.75rem 1rem' }}>
+                          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                            <select 
+                              style={{ 
+                                background: item.isAiSuggested ? 'rgba(99,102,241,0.1)' : '#1a1c2e', 
+                                border: item.isAiSuggested ? '1px solid rgba(99,102,241,0.3)' : '1px solid rgba(255,255,255,0.1)', 
+                                color: 'white', 
+                                fontSize: '0.8rem',
+                                borderRadius: '8px',
+                                padding: '4px 24px 4px 8px',
+                                cursor: 'pointer',
+                                width: '100%',
+                                appearance: 'none'
+                              }}
+                              value={item.category}
+                              onChange={(e) => {
+                                const newItems = [...ofxPreview.items];
+                                newItems[idx].category = e.target.value;
+                                newItems[idx].isAiSuggested = false; // Usuário alterou
+                                setOfxPreview({ ...ofxPreview, items: newItems });
+                              }}
+                            >
+                              {CATEGORIES.map(cat => (
+                                <option key={cat.id} value={cat.id}>{cat.id}</option>
+                              ))}
+                            </select>
+                            {item.isAiSuggested && (
+                              <span style={{ position: 'absolute', right: '8px', pointerEvents: 'none', color: '#818cf8', fontSize: '0.65rem' }}>✨</span>
+                            )}
+                            <ChevronDown size={14} style={{ position: 'absolute', right: item.isAiSuggested ? '22px' : '8px', pointerEvents: 'none', opacity: 0.5 }} />
+                          </div>
                         </td>
-                        <td style={{ padding: '0.75rem', textAlign: 'right', color: item.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)', fontWeight: 'bold' }}>
+                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: item.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)', fontWeight: 'bold' }}>
                           {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount)}
                         </td>
                       </tr>
@@ -3849,6 +4558,45 @@ export default function Dashboard() {
           ))}
         </div>
       )}
+
+      {/* Floating Finn AI Assistant */}
+      <div className="floating-ai-wrapper">
+        <AnimatePresence>
+          {isAiFloatingOpen && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className="floating-ai-window glass-panel"
+            >
+              <div className="floating-ai-header">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={16} className="text-primary" />
+                  <span className="font-bold">Chat com o Finn</span>
+                </div>
+                <button className="btn-icon" onClick={() => setIsAiFloatingOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="floating-ai-content">
+                <AiAssistant financialContext={aiFinancialContext} compactMode={true} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          className={`floating-ai-trigger ${isAiFloatingOpen ? 'active' : ''}`}
+          onClick={() => setIsAiFloatingOpen(!isAiFloatingOpen)}
+        >
+          <div className="trigger-icon-wrapper">
+            <img src="/finn-icon.png" alt="Finn" className="finn-bubble-img" />
+            <div className="pulse-ring"></div>
+          </div>
+        </motion.button>
+      </div>
     </div>
   );
 }

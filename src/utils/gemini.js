@@ -84,3 +84,60 @@ INSTRUÇÕES:
   const data = await response.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Desculpe, não consegui processar sua pergunta.';
 }
+
+/**
+ * Categoriza uma lista de transações em lote.
+ * @param {Array} transactions - Lista de nomes/descrições de transações
+ * @param {Array} categoryNames - Lista de nomes das categorias válidas
+ */
+export async function batchCategorizeTransactions(transactions, categoryNames) {
+  if (!transactions || transactions.length === 0) return [];
+
+  const prompt = `Você é um assistente especializado em categorização bancária brasileira.
+Dada uma lista de descrições de transações bancárias, sua tarefa é atribuir a cada uma a categoria mais provável da lista de categorias válidas.
+
+REGRAS:
+1. Use APENAS as categorias da lista de categorias válidas fornecida.
+2. Seja inteligente: "Uber" ou "99" é Transporte. "Ifood" ou "Restaurante" é Alimentação. "Amazon" ou "Mercado Livre" é Compras.
+3. Se realmente não souber, use "Outros".
+4. Retorne APENAS um objeto JSON onde a chave é o índice da transação (começando em 0) e o valor é o nome da categoria.
+
+CATEGORIAS VÁLIDAS:
+${categoryNames.join(', ')}
+
+LISTA DE TRANSAÇÕES:
+${transactions.map((t, i) => `${i}: "${t}"`).join('\n')}
+
+Retorno esperado (exemplo):
+{
+  "0": "Transporte",
+  "1": "Alimentação"
+}`;
+
+  const body = {
+    contents: [{
+      parts: [{ text: prompt }]
+    }],
+    generationConfig: {
+      temperature: 0.1,
+      response_mime_type: "application/json",
+    }
+  };
+
+  try {
+    const response = await fetch(GEMINI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) throw new Error('Falha na IA');
+
+    const data = await response.json();
+    const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    return JSON.parse(resultText);
+  } catch (err) {
+    console.error('Erro na categorização por IA:', err);
+    return {};
+  }
+}

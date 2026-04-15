@@ -1,22 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Bot, User, RefreshCw, Trash2 } from 'lucide-react';
+import { Send, RefreshCw, Trash2, ArrowRight } from 'lucide-react';
 import { askGemini } from '../utils/gemini';
 
 const QUICK_QUESTIONS = [
-  { emoji: '💸', text: 'Onde estou gastando mais?' },
+  { emoji: '💸', text: 'Onde estou gastando mais este mês?' },
   { emoji: '📊', text: 'Como está minha saúde financeira?' },
   { emoji: '🎯', text: 'Vou conseguir atingir minha meta?' },
-  { emoji: '💡', text: 'Me dê dicas de economia' },
-  { emoji: '📅', text: 'Minhas assinaturas estão pesadas?' },
-  { emoji: '🏦', text: 'Como devo organizar meu dinheiro?' },
+  { emoji: '💡', text: 'Me dê dicas para economizar' },
 ];
 
-export default function AiAssistant({ financialContext }) {
+export default function AiAssistant({ financialContext, compactMode = false }) {
   const [messages, setMessages] = useState([
     {
       id: 1,
       role: 'assistant',
-      text: `Olá! 👋 Sou o **Fync AI**, seu assistente financeiro pessoal.\n\nTenho acesso aos seus dados financeiros e posso te ajudar a entender melhor seus gastos, metas e como otimizar suas finanças. O que você gostaria de saber?`,
+      text: `Olá! 👋 Sou o **Finn**, seu assistente de IA do Fync.\n\nAnaliso todas as suas contas, categorizo seus gastos e descubro onde você pode economizar. Como posso te ajudar hoje?`,
       timestamp: new Date()
     }
   ]);
@@ -74,61 +72,90 @@ export default function AiAssistant({ financialContext }) {
     setMessages([{
       id: 1,
       role: 'assistant',
-      text: `Conversa reiniciada! 🔄 Como posso te ajudar com suas finanças?`,
+      text: `Conversa reiniciada! 🔄 O que você gostaria de saber sobre suas finanças?`,
       timestamp: new Date()
     }]);
   };
 
   const formatText = (text) => {
-    // Simple markdown-like formatting
+    // Simple markdown-like formatting for bold/italic and lists
     return text
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
       .replace(/\n/g, '<br/>');
   };
 
-  const formatTime = (date) =>
-    date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
   return (
-    <div className="animate-fade-in" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div className="dashboard-header" style={{ marginBottom: 0 }}>
-        <div>
-          <h1 className="dashboard-title" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{
-              width: 42, height: 42, borderRadius: '50%',
-              background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 0 20px rgba(99,102,241,0.4)'
-            }}>
-              <Sparkles size={22} color="white" />
-            </div>
-            Fync AI
-          </h1>
-          <p className="dashboard-subtitle">Assistente financeiro com inteligência artificial personalizado para você</p>
+    <div className="animate-fade-in" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: compactMode ? '0.5rem' : '1.25rem' }}>
+      {/* Header and Quick Actions Row */}
+      {!compactMode && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', alignItems: 'center' }}>
+           <button
+            className="btn btn-secondary"
+            onClick={clearChat}
+            style={{ gap: '0.5rem', display: 'flex', alignItems: 'center', fontSize: '0.8125rem', padding: '0.5rem 1rem' }}
+            title="Limpar conversa"
+          >
+            <Trash2 size={14} /> Limpar histórico
+          </button>
         </div>
-        <button
-          className="btn btn-secondary"
-          onClick={clearChat}
-          style={{ gap: '0.5rem', display: 'flex', alignItems: 'center' }}
-          title="Limpar conversa"
-        >
-          <Trash2 size={16} /> Limpar Chat
-        </button>
-      </div>
+      )}
 
-      {/* Chat Area */}
-      <div style={{ flex: 1, display: 'flex', gap: '1.5rem', minHeight: 0 }}>
-        {/* Messages */}
-        <div className="glass-panel" style={{
+      <div style={{ flex: 1, display: 'flex', gap: compactMode ? '0' : '1.5rem', minHeight: 0 }}>
+        {/* Main Chat Area */}
+        <div style={{
           flex: 1,
-          borderRadius: 'var(--radius-xl)',
+          background: 'rgba(10, 10, 18, 0.95)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: '20px',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
+          boxShadow: '0 24px 60px rgba(0,0,0,0.3)',
         }}>
-          {/* Messages List */}
+          
+          {/* Header */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.875rem',
+            padding: '1rem 1.25rem',
+            background: 'rgba(255,255,255,0.02)',
+            borderBottom: '1px solid rgba(255,255,255,0.06)'
+          }}>
+            <img 
+              src="/finn-icon.png" 
+              alt="Finn Avatar" 
+              style={{
+                width: 44, height: 44, 
+                borderRadius: '12px',
+                objectFit: 'cover',
+                boxShadow: '0 0 16px rgba(99,102,241,0.3)'
+              }} 
+            />
+            <div>
+              <div style={{ 
+                fontFamily: 'var(--font-display)', 
+                fontSize: '1.05rem', 
+                fontWeight: 700, 
+                color: 'rgba(255,255,255,0.95)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem'
+              }}>
+                Finn 
+                <span style={{ color: '#10b981', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block', boxShadow: '0 0 6px #10b981' }} />
+                  Ativo agora
+                </span>
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>
+                Assistente IA · Fync
+              </div>
+            </div>
+          </div>
+
+          {/* Messages */}
           <div style={{
             flex: 1,
             overflowY: 'auto',
@@ -137,80 +164,83 @@ export default function AiAssistant({ financialContext }) {
             flexDirection: 'column',
             gap: '1.25rem'
           }}>
-            {messages.map(msg => (
-              <div
-                key={msg.id}
-                style={{
-                  display: 'flex',
-                  gap: '0.75rem',
-                  flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
-                  alignItems: 'flex-start',
-                  animation: 'fadeIn 0.3s ease-out'
-                }}
-              >
-                {/* Avatar */}
-                <div style={{
-                  width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-                  background: msg.role === 'user'
-                    ? 'linear-gradient(135deg, #10b981, #059669)'
-                    : 'linear-gradient(135deg, #6366f1, #818cf8)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: msg.role === 'user'
-                    ? '0 0 12px rgba(16,185,129,0.3)'
-                    : '0 0 12px rgba(99,102,241,0.3)'
-                }}>
-                  {msg.role === 'user'
-                    ? <User size={18} color="white" />
-                    : <Sparkles size={18} color="white" />
-                  }
-                </div>
+            {messages.map((msg, idx) => {
+               const isContinuous = idx > 0 && messages[idx-1].role === msg.role;
+               return (
+                <div
+                  key={msg.id}
+                  style={{
+                    display: 'flex',
+                    gap: '0.75rem',
+                    flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
+                    alignItems: 'flex-end',
+                    animation: 'fadeIn 0.3s ease-out',
+                    marginTop: isContinuous ? '-0.75rem' : '0'
+                  }}
+                >
+                  {/* Finn mini avatar */}
+                  {msg.role === 'assistant' && (
+                    <img 
+                      src="/finn-icon.png" 
+                      alt="" 
+                      style={{
+                        width: 28, height: 28, 
+                        borderRadius: '8px', 
+                        objectFit: 'cover',
+                        flexShrink: 0,
+                        opacity: isContinuous && idx !== messages.length - 1 && (messages[idx+1]?.role === 'assistant') ? 0 : 1
+                      }} 
+                    />
+                  )}
 
-                {/* Bubble */}
-                <div style={{ maxWidth: '75%', display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                  <div style={{
-                    padding: '0.875rem 1.125rem',
-                    borderRadius: msg.role === 'user' ? '1.25rem 1.25rem 0.25rem 1.25rem' : '1.25rem 1.25rem 1.25rem 0.25rem',
+                  {/* Bubble */}
+                  <div style={{ 
+                    maxWidth: '85%', 
+                    padding: '0.75rem 1rem',
+                    borderRadius: msg.role === 'user' 
+                      ? '16px 16px 4px 16px' 
+                      : '16px 16px 16px 4px',
                     background: msg.role === 'user'
-                      ? 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(5,150,105,0.1))'
-                      : msg.isError ? 'rgba(239,68,68,0.1)' : 'rgba(99,102,241,0.08)',
+                      ? 'linear-gradient(135deg, #6366f1, #818cf8)' // User bubble matches mockup
+                      : msg.isError 
+                        ? 'rgba(239,68,68,0.1)' 
+                        : 'rgba(255,255,255,0.06)', // Finn bubble matches mockup
                     border: msg.role === 'user'
-                      ? '1px solid rgba(16,185,129,0.2)'
-                      : msg.isError ? '1px solid rgba(239,68,68,0.2)' : '1px solid rgba(99,102,241,0.15)',
-                    color: 'var(--text-main)',
+                      ? 'none'
+                      : msg.isError 
+                        ? '1px solid rgba(239,68,68,0.2)' 
+                        : '1px solid rgba(255,255,255,0.08)',
+                    color: msg.role === 'user' ? 'white' : 'rgba(255,255,255,0.85)',
                     fontSize: '0.9rem',
                     lineHeight: '1.6',
+                    boxShadow: msg.role === 'user' ? '0 4px 12px rgba(99,102,241,0.2)' : 'none',
                   }}
                     dangerouslySetInnerHTML={{ __html: formatText(msg.text) }}
                   />
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', paddingInline: '0.25rem' }}>
-                    {formatTime(msg.timestamp)}
-                  </span>
                 </div>
-              </div>
-            ))}
+               )
+            })}
 
             {/* Typing Indicator */}
             {isLoading && (
-              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', animation: 'fadeIn 0.3s ease-out' }}>
+                <img 
+                  src="/finn-icon.png" 
+                  alt="" 
+                  style={{ width: 28, height: 28, borderRadius: '8px', objectFit: 'cover' }} 
+                />
                 <div style={{
-                  width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-                  background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Sparkles size={18} color="white" />
-                </div>
-                <div style={{
-                  padding: '0.875rem 1.25rem',
-                  borderRadius: '1.25rem 1.25rem 1.25rem 0.25rem',
-                  background: 'rgba(99,102,241,0.08)',
-                  border: '1px solid rgba(99,102,241,0.15)',
+                  padding: '1rem',
+                  borderRadius: '16px 16px 16px 4px',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.08)',
                   display: 'flex', gap: '5px', alignItems: 'center'
                 }}>
                   {[0, 1, 2].map(i => (
                     <div key={i} style={{
-                      width: 7, height: 7, borderRadius: '50%',
-                      background: 'var(--primary-color)',
-                      animation: `typing-dot 1.2s ease-in-out ${i * 0.2}s infinite`
+                      width: 6, height: 6, borderRadius: '50%',
+                      background: 'rgba(255,255,255,0.4)',
+                      animation: `typing-dot 1s ease-in-out ${i * 0.15}s infinite`
                     }} />
                   ))}
                 </div>
@@ -221,105 +251,127 @@ export default function AiAssistant({ financialContext }) {
 
           {/* Input Area */}
           <div style={{
-            padding: '1rem 1.5rem',
-            borderTop: '1px solid var(--border-color)',
-            background: 'rgba(15,17,21,0.5)'
+            padding: '1rem',
+            borderTop: '1px solid rgba(255,255,255,0.06)',
+            background: 'rgba(255,255,255,0.02)'
           }}>
-            <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+            <form onSubmit={handleSubmit} style={{ 
+              display: 'flex', 
+              gap: '0.75rem', 
+              alignItems: 'center',
+              background: 'rgba(0,0,0,0.3)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              padding: '0.35rem 0.35rem 0.35rem 1rem',
+              borderRadius: '999px',
+            }}>
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                placeholder="Pergunte sobre suas finanças..."
-                className="input-field"
-                style={{ flex: 1, borderRadius: 'var(--radius-full)', paddingBlock: '0.75rem' }}
+                placeholder="Pergunte algo para o Finn..."
+                style={{ 
+                  flex: 1, 
+                  background: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  color: 'white',
+                  fontSize: '0.9rem',
+                }}
                 disabled={isLoading}
               />
               <button
                 type="submit"
                 disabled={!input.trim() || isLoading}
                 style={{
-                  width: 44, height: 44, borderRadius: '50%', border: 'none',
+                  width: 38, height: 38, borderRadius: '50%', border: 'none',
                   background: input.trim() && !isLoading
-                    ? 'linear-gradient(135deg, var(--primary-color), #818cf8)'
-                    : 'rgba(99,102,241,0.2)',
-                  color: 'white',
+                    ? 'linear-gradient(135deg, #6366f1, #818cf8)'
+                    : 'rgba(255,255,255,0.05)',
+                  color: input.trim() && !isLoading ? 'white' : 'rgba(255,255,255,0.2)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   cursor: input.trim() && !isLoading ? 'pointer' : 'not-allowed',
                   transition: 'all 0.2s',
                   flexShrink: 0,
-                  boxShadow: input.trim() && !isLoading ? '0 4px 14px rgba(99,102,241,0.4)' : 'none'
                 }}
               >
-                {isLoading ? <RefreshCw size={18} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={18} />}
+                {isLoading ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={16} style={{ marginLeft: '-2px' }} />}
               </button>
             </form>
           </div>
         </div>
 
-        {/* Quick Questions Sidebar */}
-        <div style={{ width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div className="glass-panel" style={{ padding: '1.25rem', borderRadius: 'var(--radius-xl)' }}>
-            <p style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
-              Perguntas Rápidas
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {QUICK_QUESTIONS.map((q, i) => (
-                <button
-                  key={i}
-                  onClick={() => sendMessage(q.text)}
-                  disabled={isLoading}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '0.6rem',
-                    padding: '0.625rem 0.875rem',
-                    borderRadius: 'var(--radius-md)',
-                    background: 'rgba(99,102,241,0.06)',
-                    border: '1px solid rgba(99,102,241,0.12)',
-                    color: 'var(--text-main)',
-                    fontSize: '0.82rem',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.15s',
-                    opacity: isLoading ? 0.5 : 1,
-                  }}
-                  onMouseEnter={e => { if (!isLoading) e.currentTarget.style.background = 'rgba(99,102,241,0.15)'; }}
-                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(99,102,241,0.06)'}
-                >
-                  <span style={{ fontSize: '1rem' }}>{q.emoji}</span>
-                  <span>{q.text}</span>
-                </button>
-              ))}
+        {/* Right Sidebar - Quick Actions */}
+        {!compactMode && (
+          <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            
+            <div style={{ 
+              background: 'rgba(10,10,18,0.7)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              padding: '1.25rem', 
+              borderRadius: '16px' 
+            }}>
+              <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 1rem 0' }}>
+                Sugestões do Finn
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {QUICK_QUESTIONS.map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={() => sendMessage(q.text)}
+                    disabled={isLoading}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.6rem',
+                      padding: '0.75rem',
+                      borderRadius: '12px',
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.05)',
+                      color: 'rgba(255,255,255,0.7)',
+                      fontSize: '0.82rem',
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(99,102,241,0.1)'; e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.3)'; } }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'; }}
+                  >
+                    <span style={{ fontSize: '1rem' }}>{q.emoji}</span>
+                    <span style={{ flex: 1 }}>{q.text}</span>
+                    <ArrowRight size={14} style={{ opacity: 0.5 }} />
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          {/* Info Card */}
-          <div className="glass-panel" style={{
-            padding: '1.25rem',
-            borderRadius: 'var(--radius-xl)',
-            background: 'rgba(99,102,241,0.05)',
-            border: '1px solid rgba(99,102,241,0.15)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              <Sparkles size={16} style={{ color: 'var(--primary-color)' }} />
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--primary-color)' }}>Fync AI</span>
+            <div style={{
+              padding: '1.25rem',
+              borderRadius: '16px',
+              background: 'linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05))',
+              border: '1px solid rgba(99,102,241,0.2)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <img src="/finn-icon.png" alt="" style={{ width: 20, height: 20, borderRadius: '4px' }} />
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#a5b4fc' }}>Inteligência Ativa</span>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.6, margin: 0 }}>
+                Eu analiso seus dados financeiros usando IA avançada para entregar respostas personalizadas e privadas.
+              </p>
             </div>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              Powered by Google Gemini 2.0 Flash. Eu analiso seus dados financeiros reais para dar conselhos personalizados.
-            </p>
+
           </div>
-        </div>
+        )}
       </div>
 
       <style>{`
         @keyframes typing-dot {
-          0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-          30% { transform: translateY(-6px); opacity: 1; }
+          0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+          30% { transform: translateY(-4px); opacity: 1; }
         }
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        .input-field::placeholder { color: rgba(255,255,255,0.3); }
       `}</style>
     </div>
   );
