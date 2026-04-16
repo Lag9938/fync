@@ -1818,3 +1818,316 @@
 .inactive-sub .card-title {
     color: var(--text-muted);
 }
+
+/* Intelligent Transactions Redesign (Pierre Inspired) */
+.tx-summary-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.tx-hero-card {
+    padding: 1.5rem 2rem;
+    border-radius: var(--radius-xl);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.05);
+}
+
+.tx-stat-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.tx-stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.tx-stat-value {
+    font-size: 1.5rem;
+    font-weight: 800;
+    font-family: var(--font-display);
+}
+
+.tx-stat-sub {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+/* Filter Bar Refined */
+.tx-smart-filters {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.filter-select {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.05);
+    padding: 0.6rem 1rem;
+    border-radius: 12px;
+    color: var(--text-main);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-width: 140px;
+}
+
+.filter-select:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.1);
+}
+
+.tx-search-container {
+    flex: 1;
+    position: relative;
+    max-width: 400px;
+}
+
+.tx-search-input {
+    width: 100%;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.05);
+    padding: 0.6rem 1rem 0.6rem 2.8rem;
+    border-radius: 12px;
+    color: var(--text-main);
+    font-size: 0.85rem;
+}
+
+.tx-search-icon {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+}
+
+/* Range Date Picker (Pierre Style) */
+.range-picker-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(8px);
+    animation: fadeIn 0.2s ease-out;
+}
+
+.range-picker-content {
+    background: #0d0f14;
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 30px 60px rgba(0,0,0,0.5);
+    border-radius: 20px;
+    width: auto;
+    max-width: 900px;
+    display: flex;
+    flex-direction: column;
+}
+
+.range-picker-body {
+    display: flex;
+}
+
+.range-picker-sidebar {
+    width: 220px;
+    border-right: 1px solid rgba(255,255,255,0.05);
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.preset-btn {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+.preset-btn:hover {
+    background: rgba(255,255,255,0.04);
+    color: var(--text-main);
+}
+
+.preset-btn.active {
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--primary-color);
+}
+
+.range-picker-main {
+    padding: 2rem;
+    flex: 1;
+}
+
+.calendar-grid-dual {
+    display: flex;
+    gap: 3rem;
+}
+
+.calendar-month-view {
+    width: 280px;
+}
+
+.calendar-header {
+    text-align: center;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+    text-transform: capitalize;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.calendar-days-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.day-header {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    padding: 8px 0;
+    font-weight: 600;
+}
+
+.day-cell {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.2s;
+    position: relative;
+    z-index: 1;
+}
+
+.day-cell:hover:not(.empty) {
+    background: rgba(255,255,255,0.1);
+}
+
+.day-cell.selected {
+    background: var(--primary-color) !important;
+    color: #fff !important;
+    font-weight: 800;
+}
+
+.day-cell.in-range {
+    background: rgba(99, 102, 241, 0.15);
+    border-radius: 0;
+}
+
+.day-cell.range-start {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.day-cell.range-end {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.range-picker-footer {
+    padding: 1rem 2rem;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0,0,0,0.2);
+    border-bottom-left-radius: 20px;
+    border-bottom-right-radius: 20px;
+}
+
+.range-summary {
+    font-family: monospace;
+    font-weight: 700;
+    color: var(--text-muted);
+}
+
+/* Premium Table Rows */
+.fync-tx-row-premium {
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    transition: all 0.2s;
+}
+
+.fync-tx-row-premium:hover {
+    background: rgba(255,255,255,0.02);
+}
+
+.fync-tx-row-premium td {
+    padding: 1.25rem 1rem;
+}
+
+.tx-account-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.tx-account-icon {
+    width: 20px; /* Made slightly bigger for bank logos */
+    height: 20px;
+    border-radius: 4px;
+    background: var(--primary-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden; /* For images */
+}
+
+/* New Premium Styles for Categories and Branding */
+.premium-category-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: filter 0.2s ease;
+}
+
+.premium-category-tag:hover {
+    filter: brightness(1.2);
+}
+
+.wallet-bank-logo {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.tx-account-icon.brand-transparent {
+    background: transparent !important;
+}

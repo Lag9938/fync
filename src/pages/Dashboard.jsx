@@ -54,7 +54,8 @@ import {
   Sparkles,
   Gamepad2,
   Play,
-  Pause
+  Pause,
+  MoreVertical
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -272,6 +273,15 @@ export default function Dashboard() {
   const [expandedInstallmentId, setExpandedInstallmentId] = useState(null);
   const [activeInstallmentTab, setActiveInstallmentTab] = useState('active'); // 'active' | 'finalized'
   const [activeSubTab, setActiveSubTab] = useState('all'); // 'all' | 'active' | 'inactive'
+  
+  // Transaction Filters State (Pierre Inspired)
+  const [txSearch, setTxSearch] = useState('');
+  const [txCategory, setTxCategory] = useState('Todas');
+  const [txWallet, setTxWallet] = useState('Todas');
+  const [txType, setTxType] = useState('Todas');
+  const [txSort, setTxSort] = useState('recentes');
+  const [txShowHidden, setTxShowHidden] = useState(false);
+  const [isRangePickerOpen, setIsRangePickerOpen] = useState(false);
 
   // Apply Theme globally
   useEffect(() => {
@@ -644,18 +654,9 @@ export default function Dashboard() {
   }, [fiInitial, fiMonthly, fiRate, fiMonths, fiRatePeriod, fiTimePeriod]);
 
   // Filtering Data
-  const filteredTransactions = useMemo(() => {
+  const baseProjectedList = useMemo(() => {
     const baseTxs = (transactions || []).filter(t => {
       if (!t || !t.date) return false;
-      
-      if (searchTerm) {
-        const query = searchTerm.toLowerCase();
-        const matchesTitle = t.title?.toLowerCase().includes(query);
-        const matchesCategory = t.category?.toLowerCase().includes(query);
-        const matchesDescription = t.description?.toLowerCase().includes(query);
-        if (!matchesTitle && !matchesCategory && !matchesDescription) return false;
-      }
-
       const tIso = String(t.date);
       if (filterMode === 'month') {
         const targetMonth = filterMonth || initialMonth;
@@ -723,7 +724,71 @@ export default function Dashboard() {
     }
 
     return baseTxs;
-  }, [transactions, filterMonth, filterMode, filterStartDate, filterEndDate, searchTerm, initialMonth, subscriptions]);
+  }, [transactions, filterMonth, filterMode, filterStartDate, filterEndDate, initialMonth, subscriptions]);
+
+  // Smart filtering logic for Transactions (Pierre Inspired)
+  const filteredTransactions = useMemo(() => {
+    let list = [...baseProjectedList];
+
+    // 1. Date Range Filter
+    if (filterMode === 'month') {
+      list = list.filter(t => t.date && String(t.date).startsWith(filterMonth));
+    } else if (filterMode === 'period') {
+      list = list.filter(t => {
+        if (!t.date) return false;
+        const d = t.date;
+        return d >= filterStartDate && d <= filterEndDate;
+      });
+    }
+
+    // 2. Type Filter
+    if (txType !== 'Todas') {
+      list = list.filter(t => txType === 'Receitas' ? t.type === 'income' : t.type === 'expense');
+    }
+
+    // 3. Category Filter
+    if (txCategory !== 'Todas') {
+      list = list.filter(t => t.category === txCategory);
+    }
+
+    // 4. Wallet Filter
+    if (txWallet !== 'Todas') {
+      list = list.filter(t => t.walletId === txWallet);
+    }
+
+    // 5. Search Filter (Global or Specific)
+    const activeSearch = searchTerm || txSearch;
+    if (activeSearch) {
+      const s = activeSearch.toLowerCase();
+      list = list.filter(t => 
+        (t.title?.toLowerCase().includes(s)) || 
+        (t.description?.toLowerCase().includes(s)) ||
+        (t.category?.toLowerCase().includes(s))
+      );
+    }
+
+    // 6. Sorting
+    list.sort((a, b) => {
+      if (txSort === 'recentes') return new Date(b.date) - new Date(a.date);
+      if (txSort === 'antigas') return new Date(a.date) - new Date(b.date);
+      if (txSort === 'valor-maior') return b.amount - a.amount;
+      if (txSort === 'valor-menor') return a.amount - b.amount;
+      return 0;
+    });
+
+    return list;
+  }, [baseProjectedList, txType, txCategory, txWallet, txSearch, searchTerm, txSort]);
+
+  // Totals for the current filtered view
+  const txTotals = useMemo(() => {
+    return filteredTransactions.reduce((acc, t) => {
+      const amt = parseFloat(t.amount) || 0;
+      if (t.type === 'income') acc.income += amt;
+      else acc.expense += amt;
+      acc.total += 1;
+      return acc;
+    }, { income: 0, expense: 0, total: 0 });
+  }, [filteredTransactions]);
 
   const memoizedSortedTransactions = useMemo(() => {
     try {
@@ -1527,12 +1592,11 @@ export default function Dashboard() {
     return (
       <div 
         className={`glass-panel ${isTxFullscreen ? 'immersive-tx-view' : ''}`} 
-        style={!isTxFullscreen ? { padding: '1.5rem', borderRadius: 'var(--radius-xl)', marginTop: '1.5rem' } : {}}
+        style={!isTxFullscreen ? { padding: '1.5rem', borderRadius: 'var(--radius-xl)', border: 'none', background: 'transparent' } : {}}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <h2 className="chart-title" style={{ margin: 0 }}>Histórico de Lançamentos ({filteredTransactions.length})</h2>
-            {selectedIds.length > 0 && (
+             {selectedIds.length > 0 && (
               <span className="badge" style={{ backgroundColor: 'var(--primary-color)', color: 'white', padding: '4px 12px', borderRadius: '20px', fontSize: '0.8rem' }}>
                 {selectedIds.length} selecionados
               </span>
@@ -1557,105 +1621,117 @@ export default function Dashboard() {
               </div>
             )}
 
-            <button 
-              className="btn-icon" 
-              onClick={() => {
-                const allIds = filteredTransactions.map(t => t.id);
-                if (selectedIds.length === allIds.length) setSelectedIds([]);
-                else setSelectedIds(allIds);
-              }}
-              title="Selecionar Tudo"
-              style={{ color: selectedIds.length > 0 && selectedIds.length === filteredTransactions.length ? 'var(--primary-color)' : 'inherit' }}
-            >
-              <CheckCircle2 size={22} />
-            </button>
-
             <button className="btn-icon" onClick={() => setIsTxFullscreen(!isTxFullscreen)} title="Alternar Tela Cheia">
               {isTxFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
             </button>
           </div>
         </div>
 
-        <div style={{ overflowY: 'auto', overflowX: 'auto', flex: 1, maxHeight: isTxFullscreen ? 'none' : '450px' }}>
+        <div style={{ overflowY: 'auto', overflowX: 'auto', flex: 1 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+              <tr style={{ color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                <th style={{ padding: '1rem', width: '40px' }}>
+                  <input 
+                    type="checkbox" 
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedIds(filteredTransactions.map(t => t.id));
+                      else setSelectedIds([]);
+                    }}
+                    checked={selectedIds.length > 0 && selectedIds.length === filteredTransactions.length}
+                  />
+                </th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>DESCRIÇÃO</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>CATEGORIA</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>CONTA</th>
+                <th style={{ padding: '1rem', textAlign: 'left' }}>DATA</th>
+                <th style={{ padding: '1rem', textAlign: 'right' }}>VALOR</th>
                 <th style={{ padding: '1rem', width: '40px' }}></th>
-                <th style={{ padding: '1rem', textAlign: 'left' }}>Data</th>
-                <th style={{ padding: '1rem', textAlign: 'left' }}>Descrição</th>
-                <th style={{ padding: '1rem', textAlign: 'left' }}>Conta</th>
-                <th style={{ padding: '1rem', textAlign: 'left' }}>Categoria</th>
-                <th style={{ padding: '1rem', textAlign: 'right' }}>Valor</th>
-                <th style={{ padding: '1rem', textAlign: 'right' }}>Ações</th>
               </tr>
             </thead>
             <tbody>
-              {(isTxFullscreen ? filteredTransactions : filteredTransactions.slice(0, 50)).map(t => (
-                <tr 
-                  key={t.id} 
-                  className="tx-row-clickable"
-                  onClick={(e) => {
-                    if (e.target.closest('button') || e.target.type === 'checkbox') return;
-                    setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id]);
-                  }}
-                  style={{ 
-                    borderBottom: '1px solid var(--border-color)', 
-                    background: selectedIds.includes(t.id) ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  <td style={{ padding: '1rem' }}>
-                    <input 
-                      type="checkbox" 
-                      style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
-                      checked={selectedIds.includes(t.id)} 
-                      onChange={() => setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id])} 
-                    />
-                  </td>
-                  <td style={{ padding: '1rem', whiteSpace: 'nowrap', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                    {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Sem Data'}
-                  </td>
-                  <td style={{ padding: '1rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                      <div className="tx-icon-mini" style={{ 
-                        background: getStoreIcon(t.title).color + '22',
-                        color: getStoreIcon(t.title).color,
-                        width: '32px', height: '32px', borderRadius: '8px',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}>
-                        {React.createElement(getStoreIcon(t.title).icon, { size: 16 })}
+              {filteredTransactions.map(t => {
+                const { icon: StoreIcon, color: iconColor, domain, isBrand } = getStoreIcon(t.title);
+                const wallet = wallets.find(w => w.id === t.walletId);
+                
+                return (
+                  <tr 
+                    key={t.id} 
+                    className="fync-tx-row-premium"
+                    onClick={(e) => {
+                      if (e.target.closest('button') || e.target.type === 'checkbox') return;
+                      // Logic for detail or selection
+                    }}
+                  >
+                    <td style={{ padding: '1rem' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={selectedIds.includes(t.id)} 
+                        onChange={() => setSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id])} 
+                      />
+                    </td>
+                    <td>
+                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                        <div className={`store-badge-circle mini ${isBrand ? 'brand-logo' : ''}`} style={{ backgroundColor: isBrand ? '#fff' : iconColor, width: '32px', height: '32px' }}>
+                           {isBrand ? (
+                             <img 
+                               src={`https://logo.clearbit.com/${domain}?size=64`} 
+                               alt={t.name}
+                               className="brand-logo-img"
+                               onError={(e) => {
+                                 e.target.onerror = null;
+                                 e.target.src = `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
+                               }}
+                             />
+                           ) : (
+                             <StoreIcon size={16} color="#fff" />
+                           )}
+                        </div>
+                        <span style={{ fontWeight: 600 }}>{t.title}</span>
                       </div>
-                      <div>
-                        <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{t.title}</div>
-                        {t.isProjected && (
-                          <span style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary-color)', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Previsto
-                          </span>
-                        )}
+                    </td>
+                    <td>
+                      <div className="premium-category-tag" style={{ border: `1px solid ${iconColor}33`, backgroundColor: `${iconColor}1a`, color: iconColor }}>
+                        {CATEGORIES.find(c => c.id === t.category) ? React.createElement(CATEGORIES.find(c => c.id === t.category).icon, { size: 14 }) : <ArrowUpRight size={14} />}
+                        <span>{t.category}</span>
                       </div>
-                    </div>
-                  </td>
-                  <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    {wallets.find(w => w.id === t.walletId)?.name || 'N/A'}
-                  </td>
-                  <td style={{ padding: '1rem' }}>
-                    <span className="category-tag">{t.category}</span>
-                  </td>
-                  <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 700, color: t.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)' }}>
-                    {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
-                  </td>
-                  <td style={{ padding: '1rem', textAlign: 'right' }}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                      <button className="btn-icon" onClick={() => openEditTransaction(t)}><Edit2 size={16} /></button>
-                      <button className="btn-icon" onClick={() => deleteTransaction(t.id)}><Trash2 size={16} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td>
+                      <div className="tx-account-badge">
+                        <div className={`tx-account-icon ${getStoreIcon(wallet?.name || '').isBrand ? 'brand-transparent' : ''}`} style={{ color: getStoreIcon(wallet?.name || '').color }}>
+                          {getStoreIcon(wallet?.name || '').isBrand ? (
+                             <img 
+                               src={`https://logo.clearbit.com/${getStoreIcon(wallet?.name || '').domain}?size=64`} 
+                               alt={wallet?.name}
+                               className="wallet-bank-logo"
+                               onError={(e) => {
+                                 e.target.onerror = null;
+                                 e.target.src = `https://www.google.com/s2/favicons?sz=64&domain=${getStoreIcon(wallet?.name || '').domain}`;
+                               }}
+                             />
+                          ) : (
+                            wallet?.type === 'checking' ? <Wallet size={14}/> : <CreditCard size={14}/>
+                          )}
+                        </div>
+                        <span style={{ fontWeight: 500 }}>{wallet?.name || 'N/A'}</span>
+                      </div>
+                    </td>
+                    <td style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                      {new Date(t.date).toLocaleDateString('pt-BR')}
+                    </td>
+                    <td style={{ textAlign: 'right', fontWeight: 800, color: t.type === 'income' ? 'var(--success-color)' : '#fff' }}>
+                      {t.type === 'income' ? '+ ' : ''}{formatCurrency(t.amount)}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                       <button className="btn-icon circle-btn mini" onClick={() => openEditTransaction(t)}><MoreVertical size={16} /></button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {filteredTransactions.length === 0 && (
-            <div className="text-center text-muted" style={{ padding: '3rem' }}>Nenhum lançamento encontrado.</div>
+            <div className="text-center text-muted" style={{ padding: '5rem' }}>Nenhum lançamento encontrado para esses filtros.</div>
           )}
         </div>
       </div>
@@ -2453,39 +2529,235 @@ export default function Dashboard() {
     </div>
   );
 
-  const renderTransactions = () => (
-    <div className={`animate-fade-in ${isTxFullscreen ? 'tx-fullscreen-view' : ''}`}>
-      {!isTxFullscreen && (
-        <div className="dashboard-header">
-          <div>
-            <h1 className="dashboard-title">Lançamentos</h1>
-            <p className="dashboard-subtitle">Histórico completo · <span className="text-primary font-medium">{getDisplaySubtitle()}</span></p>
+  // --- Pierre Inspired Range Picker Component ---
+  const renderRangePicker = () => {
+    if (!isRangePickerOpen) return null;
+
+    const presets = [
+      { label: 'Todo período', value: 'all' },
+      { label: 'Últimos 30 dias', value: '30days' },
+      { label: 'Últimos 90 dias', value: '90days' },
+      { label: 'Este mês', value: 'thisMonth' },
+      { label: 'Mês passado', value: 'lastMonth' },
+      { label: 'Últimos 6 meses', value: '6months' },
+      { label: 'Este ano', value: 'thisYear' },
+      { label: 'Ano passado', value: 'lastYear' },
+    ];
+
+    const applyPreset = (preset) => {
+      const today = new Date();
+      let start = new Date();
+      let end = new Date();
+
+      switch(preset) {
+        case '30days': start.setDate(today.getDate() - 30); break;
+        case '90days': start.setDate(today.getDate() - 90); break;
+        case 'thisMonth': 
+          start = new Date(today.getFullYear(), today.getMonth(), 1);
+          end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+          break;
+        case 'lastMonth':
+          start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+          end = new Date(today.getFullYear(), today.getMonth(), 0);
+          break;
+        case '6months': start.setMonth(today.getMonth() - 6); break;
+        case 'thisYear': start = new Date(today.getFullYear(), 0, 1); break;
+        case 'lastYear': 
+          start = new Date(today.getFullYear() - 1, 0, 1);
+          end = new Date(today.getFullYear() - 1, 11, 31);
+          break;
+        case 'all':
+          start = new Date(2020, 0, 1);
+          break;
+      }
+
+      setFilterStartDate(start.toISOString().split('T')[0]);
+      setFilterEndDate(end.toISOString().split('T')[0]);
+      setFilterMode('period');
+    };
+
+    const renderCalendar = (monthOffset) => {
+      const date = new Date();
+      date.setMonth(date.getMonth() + monthOffset);
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const monthName = new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(date);
+      
+      const firstDay = new Date(year, month, 1).getDay();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      
+      const days = [];
+      for (let i = 0; i < firstDay; i++) days.push(<div key={`empty-${i}`} className="day-cell empty"></div>);
+      for (let d = 1; d <= daysInMonth; d++) {
+        const currentStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const isSelected = currentStr === filterStartDate || currentStr === filterEndDate;
+        const isInRange = currentStr >= filterStartDate && currentStr <= filterEndDate;
+        
+        days.push(
+          <div 
+            key={d} 
+            className={`day-cell ${isSelected ? 'selected' : ''} ${isInRange ? 'in-range' : ''}`}
+            onClick={() => {
+              if (!filterStartDate || (filterStartDate && filterEndDate)) {
+                setFilterStartDate(currentStr);
+                setFilterEndDate('');
+              } else {
+                if (currentStr < filterStartDate) {
+                  setFilterEndDate(filterStartDate);
+                  setFilterStartDate(currentStr);
+                } else {
+                  setFilterEndDate(currentStr);
+                }
+              }
+            }}
+          >
+            {d}
           </div>
-          <div className="flex gap-2">
-            <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".ofx" style={{ display: 'none' }} />
-            <button 
-              className="btn btn-secondary" 
-              onClick={() => fileInputRef.current && fileInputRef.current.click()} 
-              style={{ background: 'rgba(59, 130, 246, 0.1)', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}
-            >
-              <UploadCloud size={18} /> Importar OFX
-            </button>
-            <button className="btn btn-secondary" onClick={handleExportPDF}>
-              <FileDown size={18} className="text-danger" /> PDF
-            </button>
-            <button className="btn btn-secondary" onClick={handleExportExcel}>
-              <FileDown size={18} className="text-success" /> Excel
-            </button>
-            <button className="btn btn-primary" onClick={() => openNewTransaction('expense')}>
-              <Plus size={18} /> Nova Transação
-            </button>
+        );
+      }
+      
+      return (
+        <div className="calendar-month-view">
+          <div className="calendar-header">
+            <span>{monthName} {year}</span>
+          </div>
+          <div className="calendar-days-grid">
+            {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map(day => <div key={day} className="day-header">{day}</div>)}
+            {days}
           </div>
         </div>
-      )}
-      {!isTxFullscreen && renderInteractiveSelector()}
-      {renderMainTransactionTable()}
-    </div>
-  );
+      );
+    };
+
+    return (
+      <div className="range-picker-overlay" onClick={() => setIsRangePickerOpen(false)}>
+        <div className="range-picker-content animate-slide-in" onClick={e => e.stopPropagation()}>
+          <div className="range-picker-body">
+            <div className="range-picker-sidebar">
+              {presets.map(p => (
+                <button key={p.value} className="preset-btn" onClick={() => applyPreset(p.value)}>{p.label}</button>
+              ))}
+            </div>
+            <div className="range-picker-main">
+              <div className="calendar-grid-dual">
+                {renderCalendar(-1)}
+                {renderCalendar(0)}
+              </div>
+            </div>
+          </div>
+          <div className="range-picker-footer">
+            <div className="range-summary">
+              {filterStartDate ? new Date(filterStartDate).toLocaleDateString('pt-BR') : '...'} - {filterEndDate ? new Date(filterEndDate).toLocaleDateString('pt-BR') : '...'}
+            </div>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button className="btn btn-secondary" onClick={() => setIsRangePickerOpen(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={() => setIsRangePickerOpen(false)} style={{ background: 'var(--success-color)' }}>Aplicar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderTransactions = () => {
+    return (
+      <div className={`animate-fade-in ${isTxFullscreen ? 'tx-fullscreen-view' : ''}`}>
+        {!isTxFullscreen && (
+          <>
+            <div className="dashboard-header" style={{ marginBottom: '1.5rem', marginTop: '3.5rem' }}>
+              <div>
+                <h1 className="dashboard-title">Transações Inteligentes</h1>
+                <p className="dashboard-subtitle">Monitoramento em tempo real do seu fluxo de caixa.</p>
+              </div>
+              <div className="flex gap-2">
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".ofx" style={{ display: 'none' }} />
+                <button className="btn btn-secondary" onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ background: 'rgba(59, 130, 246, 0.1)', borderColor: 'var(--primary-color)', color: 'var(--primary-color)' }}>
+                  <UploadCloud size={18} /> Importar OFX
+                </button>
+                <button className="btn btn-primary" onClick={() => openNewTransaction('expense')}>
+                  <Plus size={18} /> Nova Transação
+                </button>
+              </div>
+            </div>
+
+            {/* Summary Cards (Pierre Style) */}
+            <div className="tx-summary-cards">
+              <div className="tx-hero-card glass-panel">
+                <div className="tx-stat-group">
+                  <span className="tx-stat-label">Total de Lançamentos</span>
+                  <span className="tx-stat-value"># {txTotals.total}</span>
+                </div>
+                <div className="tx-stat-group text-right">
+                  <span className="tx-stat-label">Receitas do Período</span>
+                  <span className="tx-stat-value text-success">{formatCurrency(txTotals.income)}</span>
+                  <div className="tx-stat-sub text-success"><ArrowUpRight size={14}/> Fluxo Positivo</div>
+                </div>
+              </div>
+              <div className="tx-hero-card glass-panel">
+                <div className="tx-stat-group">
+                  <span className="tx-stat-label">Despesas Totais</span>
+                  <span className="tx-stat-value text-danger">{formatCurrency(txTotals.expense)}</span>
+                  <div className="tx-stat-sub text-danger"><ArrowDownRight size={14}/> Saídas no período</div>
+                </div>
+                <div className="tx-stat-group text-right">
+                  <span className="tx-stat-label">Saldo Líquido</span>
+                  <span className="tx-stat-value">{formatCurrency(txTotals.income - txTotals.expense)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Smart Filter Bar */}
+            <div className="tx-smart-filters">
+              <div 
+                className="filter-select flex items-center gap-2" 
+                onClick={() => setIsRangePickerOpen(true)}
+              >
+                <Calendar size={16} className="text-primary" />
+                {filterMode === 'month' ? filterMonth : 'Intervalo Personalizado'}
+              </div>
+
+              <select className="filter-select" value={txWallet} onChange={e => setTxWallet(e.target.value)}>
+                <option value="Todas">Todas as Contas</option>
+                {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+
+              <select className="filter-select" value={txType} onChange={e => setTxType(e.target.value)}>
+                <option value="Todas">Todas Transações</option>
+                <option value="Receitas">Receitas</option>
+                <option value="Despesas">Despesas</option>
+              </select>
+
+              <select className="filter-select" value={txSort} onChange={e => setTxSort(e.target.value)}>
+                <option value="recentes">Data (Mais recentes)</option>
+                <option value="antigas">Data (Mais antigas)</option>
+                <option value="valor-maior">Valor (Maior)</option>
+                <option value="valor-menor">Valor (Menor)</option>
+              </select>
+
+              <select className="filter-select" value={txCategory} onChange={e => setTxCategory(e.target.value)}>
+                <option value="Todas">Categorias</option>
+                {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+              </select>
+
+              <div className="tx-search-container">
+                <Search className="tx-search-icon" size={16} />
+                <input 
+                  type="text" 
+                  className="tx-search-input" 
+                  placeholder="Buscar transações..." 
+                  value={txSearch}
+                  onChange={e => setTxSearch(e.target.value)}
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {renderMainTransactionTable()}
+        {renderRangePicker()}
+      </div>
+    );
+  };
 
   // --- B3 IMPORTER ---
   const parseB3Excel = (file) => {
