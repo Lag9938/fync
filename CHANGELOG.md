@@ -2,6 +2,11 @@
 
 Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 
+## [1.3.0] - 2026-04-16
+### Adicionado
+- **Dashboard Premium (Pierre-style):** Redesign completo da aba de transações, incluindo Hero Cards para resumo financeiro, barra de filtros inteligentes e design minimalista em glassmorphism.
+- **Seletor de Datas Avançado:** Implementação de calendário duplo flutuante para seleção de intervalos no histórico de transações.
+
 ## [1.2.0] - 2026-04-15
 ### Adicionado
 - **Inteligência de Importação:** Novo mecanismo de detecção de duplicatas no OFX baseado em Data, Título e Valor.
