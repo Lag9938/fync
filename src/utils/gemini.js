@@ -1,5 +1,5 @@
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${GEMINI_API_KEY}`;
 
 /**
  * Envia uma mensagem para o Gemini com contexto financeiro do usuário.
@@ -21,22 +21,22 @@ export async function askGemini(userMessage, financialContext = {}, history = []
   const systemPrompt = `Você é o Fync AI, um assistente financeiro pessoal inteligente, empático e especialista em finanças pessoais brasileiras.
 
 DADOS FINANCEIROS ATUAIS DO USUÁRIO:
-- Saldo total em carteiras: R$ ${totalBalance.toFixed(2)}
-- Receitas no período: R$ ${totalIncome.toFixed(2)}
-- Despesas no período: R$ ${totalExpenses.toFixed(2)}
-- Saldo do período: R$ ${(totalIncome - totalExpenses).toFixed(2)}
+- Saldo total em carteiras: R$ ${Number(totalBalance || 0).toFixed(2)}
+- Receitas no período: R$ ${Number(totalIncome || 0).toFixed(2)}
+- Despesas no período: R$ ${Number(totalExpenses || 0).toFixed(2)}
+- Saldo do período: R$ ${(Number(totalIncome || 0) - Number(totalExpenses || 0)).toFixed(2)}
 
 TOP CATEGORIAS DE GASTOS:
-${topCategories.map((c, i) => `${i + 1}. ${c.name}: R$ ${c.total.toFixed(2)}`).join('\n') || 'Nenhum dado disponível'}
+${topCategories.map((c, i) => `${i + 1}. ${c.name}: R$ ${Number(c.total || 0).toFixed(2)}`).join('\n') || 'Nenhum dado disponível'}
 
 METAS DE ECONOMIA ATIVAS:
-${activeGoals.map(g => `- ${g.title}: R$ ${g.currentAmount?.toFixed(2)} / R$ ${g.targetAmount?.toFixed(2)} (${((g.currentAmount / g.targetAmount) * 100).toFixed(0)}%)`).join('\n') || 'Nenhuma meta cadastrada'}
+${activeGoals.map(g => `- ${g.title}: R$ ${Number(g.currentAmount || 0).toFixed(2)} / R$ ${Number(g.targetAmount || 0).toFixed(2)} (${g.targetAmount > 0 ? ((g.currentAmount / g.targetAmount) * 100).toFixed(0) : 0}%)`).join('\n') || 'Nenhuma meta cadastrada'}
 
 ASSINATURAS ATIVAS:
-${activeSubscriptions.map(s => `- ${s.name}: R$ ${s.amount?.toFixed(2)}/mês (dia ${s.billingDay})`).join('\n') || 'Nenhuma assinatura'}
+${activeSubscriptions.map(s => `- ${s.name}: R$ ${Number(s.amount || 0).toFixed(2)}/mês (dia ${s.billingDay})`).join('\n') || 'Nenhuma assinatura'}
 
 CARTEIRAS:
-${wallets.map(w => `- ${w.name}: R$ ${w.balance?.toFixed(2)}`).join('\n') || 'Nenhuma carteira'}
+${wallets.map(w => `- ${w.name}: R$ ${Number(w.balance || 0).toFixed(2)}`).join('\n') || 'Nenhuma carteira'}
 
 INSTRUÇÕES:
 - Responda SEMPRE em português brasileiro de forma amigável, direta e útil
@@ -60,7 +60,7 @@ INSTRUÇÕES:
   ];
 
   const body = {
-    system_instruction: {
+    systemInstruction: {
       parts: [{ text: systemPrompt }]
     },
     contents,

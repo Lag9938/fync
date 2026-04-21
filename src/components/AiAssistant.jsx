@@ -10,14 +10,32 @@ const QUICK_QUESTIONS = [
 ];
 
 export default function AiAssistant({ financialContext, compactMode = false }) {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      role: 'assistant',
-      text: `Olá! 👋 Sou o **Finn**, seu assistente de IA do Fync.\n\nAnaliso todas as suas contas, categorizo seus gastos e descubro onde você pode economizar. Como posso te ajudar hoje?`,
-      timestamp: new Date()
+  const STORAGE_KEY = 'fync_finn_chat_history';
+
+  const [messages, setMessages] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.length > 0) {
+          return parsed.map(m => ({
+            ...m,
+            timestamp: new Date(m.timestamp)
+          }));
+        }
+      } catch (e) {
+        console.error('Erro ao carregar histórico do Finn:', e);
+      }
     }
-  ]);
+    return [
+      {
+        id: 1,
+        role: 'assistant',
+        text: `Olá! 👋 Sou o **Finn**, seu assistente de IA do Fync.\n\nAnaliso todas as suas contas, categorizo seus gastos e descubro onde você pode economizar. Como posso te ajudar hoje?`,
+        timestamp: new Date()
+      }
+    ];
+  });
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef(null);
@@ -25,6 +43,8 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Salvar no localStorage sempre que as mensagens mudarem
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
   }, [messages]);
 
   const getHistory = () =>
@@ -69,12 +89,18 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
   };
 
   const clearChat = () => {
-    setMessages([{
-      id: 1,
-      role: 'assistant',
-      text: `Conversa reiniciada! 🔄 O que você gostaria de saber sobre suas finanças?`,
-      timestamp: new Date()
-    }]);
+    if (window.confirm('Tem certeza que deseja limpar todo o histórico da conversa?')) {
+      const initialMsg = [
+        {
+          id: 1,
+          role: 'assistant',
+          text: `Olá! 👋 Sou o **Finn**, seu assistente de IA do Fync.\n\nAnaliso todas as suas contas, categorizo seus gastos e descubro onde você pode economizar. Como posso te ajudar hoje?`,
+          timestamp: new Date()
+        }
+      ];
+      setMessages(initialMsg);
+      localStorage.removeItem(STORAGE_KEY);
+    }
   };
 
   const formatText = (text) => {
@@ -110,7 +136,6 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
           borderRadius: '20px',
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden',
           boxShadow: '0 24px 60px rgba(0,0,0,0.3)',
         }}>
           
@@ -172,6 +197,7 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
                   style={{
                     display: 'flex',
                     gap: '0.75rem',
+                    width: '100%',
                     flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
                     alignItems: 'flex-end',
                     animation: 'fadeIn 0.3s ease-out',
@@ -196,6 +222,8 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
                   {/* Bubble */}
                   <div style={{ 
                     maxWidth: '85%', 
+                    minWidth: 0,
+                    width: 'fit-content',
                     padding: '0.75rem 1rem',
                     borderRadius: msg.role === 'user' 
                       ? '16px 16px 4px 16px' 
@@ -213,6 +241,9 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
                     color: msg.role === 'user' ? 'white' : 'rgba(255,255,255,0.85)',
                     fontSize: '0.9rem',
                     lineHeight: '1.6',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    overflowWrap: 'break-word',
                     boxShadow: msg.role === 'user' ? '0 4px 12px rgba(99,102,241,0.2)' : 'none',
                   }}
                     dangerouslySetInnerHTML={{ __html: formatText(msg.text) }}
