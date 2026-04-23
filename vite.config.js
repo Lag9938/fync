@@ -40,6 +40,21 @@ export default defineConfig({
         target: 'https://query1.finance.yahoo.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/yahoo/, '')
+      },
+      '/api/brapi': {
+        target: 'https://brapi.dev',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/brapi/, '')
+      },
+      '/api/rss': {
+        target: 'https://www.infomoney.com.br',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/rss/, '')
+      },
+      '/api/awesomeapi': {
+        target: 'https://economia.awesomeapi.com.br',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/awesomeapi/, '')
       }
     }
   }

@@ -1,6 +1,22 @@
 {
   "rewrites": [
     {
+      "source": "/api/yahoo/(.*)",
+      "destination": "https://query1.finance.yahoo.com/$1"
+    },
+    {
+      "source": "/api/brapi/(.*)",
+      "destination": "https://brapi.dev/$1"
+    },
+    {
+      "source": "/api/rss/(.*)",
+      "destination": "https://www.infomoney.com.br/$1"
+    },
+    {
+      "source": "/api/awesomeapi/(.*)",
+      "destination": "https://economia.awesomeapi.com.br/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

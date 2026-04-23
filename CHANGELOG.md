@@ -1,12 +1,80 @@
 # Changelog - Fync Financial Dashboard
 
+
 Todas as mudanças notable neste projeto serão documentadas neste arquivo.
+
+## [1.8.2-STABLE] - 2026-04-23
+### Added
+- **Importação de Extrato PDF via IA (Transações)**: O botão "Importar PDF" na aba de Transações agora utiliza o Gemini 1.5 Flash para ler automaticamente qualquer extrato bancário em PDF e importar as transações para o dashboard.
+- **Importação de Nota de Corretagem PDF via IA (Investimentos)**: O painel "Importar B3" agora possui uma segunda opção para importar PDFs de notas de corretagem, com extração automática de operações de compra/venda via IA.
+- **Exportar Relatório PDF e Excel**: Adicionados os botões "Exportar PDF" e "Exportar Excel" visíveis na aba de Transações, permitindo gerar relatórios completos do histórico financeiro.
+- **Dia no Fluxo de Parcelamentos**: O Fluxo de Pagamento na aba de Parcelamentos agora exibe o dia exato da transação junto com o mês e ano.
+
+### Fixed
+- **Exportação para PDF**: Corrigido o bug que impedia a geração do arquivo PDF ao exportar o relatório (a função `autoTable` estava sendo chamada incorretamente).
+
+## [1.8.1-STABLE] - 2026-04-23
+### Fixed
+- **Filtro de Data (Transações)**: Correção na navegação de meses do calendário no seletor de datas, permitindo a mudança do mês.
+- **Filtro de Data (Categorias)**: Adicionado o filtro de datas também na aba de Categorias.
+- **Identificação de Contas**: Adicionado o indicativo "(cartão)" ao lado do nome de contas de crédito no seletor da tela de transações.
+
+## [1.8.0-STABLE] - 2026-04-22
+### Fixed
+- **Tabelas Mobile (Scroll)**: Implementação de rolagem horizontal nativa na tabela de transações, garantindo que colunas como "Data" e "Valor" sejam acessíveis em qualquer celular.
+- **Índices de Mercado Mobile**: Otimização do carrossel de índices (IBOV, IFIX, etc.) para permitir navegação lateral suave por toque em telas pequenas.
+- **Restauração Desktop**: Recuperação total dos grids originais do computador (Investimentos com notícias na lateral, cards de estatísticas em 3 colunas e gráfico de categorias expandido).
+- **Menu Lateral Mobile**: Correção do botão de hambúrguer e adição de um "drawer" exclusivo para navegação mobile que não interfere no layout desktop.
+- **Proxies de API (Vercel)**: Configuração de `rewrites` no `vercel.json` para permitir que dados de mercado (Yahoo Finance, Brapi, AwesomeAPI) funcionem corretamente em produção.
+
+
+
+## [1.7.3-MOBILE] - 2026-04-22
+### Fixed
+- **Mobile Responsiveness (Crítico)**: Correção definitiva de corte de informações e sobreposição de gráficos em dispositivos móveis.
+- **Layout de Categorias**: Ajuste no gráfico de Donut para empilhamento vertical automático no celular, evitando conflito com o texto de resumo.
+- **Lista de Lançamentos**: Otimização do espaçamento em linhas de categoria para telas pequenas, removendo barras de progresso redundantes para ganhar espaço.
+- **Estabilidade Visual**: Implementação de `overflow-x: hidden` global e limpeza de estilos inline conflitantes no Dashboard.
+
+### Added
+- **Painel Lateral de Ativos**: Transformação do modal de busca em um "Side Drawer" imersivo para análise detalhada.
+- **Análise com IA (Finn Insight)**: Integração com Gemini para análise fundamentalista em tempo real de ações e FIIs.
+- **Gráficos Ampliados**: Visualização de histórico intraday com maior resolução no detalhe do ativo.
+
+### Fixed
+- **Índices em Tempo Real**: Correção do IFIX e SELIC (agora via API oficial do Banco Central).
+- **Estabilidade de UI**: Correção de erros de renderização (ícones ausentes e tags não fechadas).
+
+## [1.7.1] - 2026-04-22
+### Added
+- **Performance (Otimização)**: Implementação de `useMemo` para cálculos de patrimônio, eliminando lag no dashboard.
+- **Consolidação Financeira**: Patrimônio Atual agora reflete valor de mercado real.
+- **Filtro de Notícias**: Modal para filtragem temporal de notícias financeiras.
+
+### Fixed
+- **Cálculo de Rentabilidade**: Ajuste na lógica de Lucro/Prejuízo total incluindo dividendos.
+- **Novos Índices:** Monitoramento expandido com S&P 500, NASDAQ e Bitcoin (BTC).
+- **Consolidação de Patrimônio:** O Hub do Investidor agora calcula o Patrimônio Atual com base nas cotações em tempo real e exibe a Rentabilidade Total (lucro/prejuízo + dividendos).
+- **Filtro de Notícias:** Interface de notícias otimizada com atualização automática.
+
+## [1.7.0] - 2026-04-22
+### Adicionado
+- **Análise Fundamentalista:** Adicionados indicadores (P/L, P/VP, DY, LPA) no detalhe das ações para auxiliar na tomada de decisão.
+- **Novos Índices:** Monitoramento expandido com S&P 500, NASDAQ e Bitcoin (BTC).
+- **Consolidação de Patrimônio:** O Hub do Investidor agora calcula o Patrimônio Atual com base nas cotações em tempo real e exibe a Rentabilidade Total (lucro/prejuízo + dividendos).
+- **Filtro de Notícias:** Interface de notícias otimizada com atualização automática.
 
 ## [1.6.0] - 2026-04-21
 ### Adicionado
 - **Índices em Tempo Real:** O Hub do Investidor agora monitora e exibe as cotações ao vivo do Ibovespa, IFIX e Dólar diretamente da B3/Yahoo Finance.
 - **Gráfico de Evolução Patrimonial:** Visualização em gráfico de área do crescimento do seu patrimônio investido nos últimos 12 meses.
 - **Auto-Refresh:** Os dados de mercado são atualizados automaticamente a cada 5 minutos enquanto você navega pela área de investimentos.
+
+## [1.6.0.3] - 2026-04-22
+### Corrigido
+- **Dados de Mercado:** Corrigida a integração com o Dólar, Selic e inclusão do índice IFIX.
+- **Feed de Notícias:** Atualizado para o feed principal do InfoMoney para garantir notícias do dia.
+- **Proxy de API:** Adicionado suporte para AwesomeAPI no ambiente de desenvolvimento.
 
 ## [v1.6.0.2] - 2026-04-21
 ### Fixes

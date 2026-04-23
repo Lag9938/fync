@@ -141,3 +141,121 @@ Retorno esperado (exemplo):
     return {};
   }
 }
+
+const GEMINI_FLASH_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+/**
+ * Lê um arquivo PDF (extrato bancário) via IA e retorna as transações.
+ * @param {string} base64Pdf - O conteúdo do PDF em base64
+ */
+export async function extractTransactionsFromPDF(base64Pdf) {
+  const prompt = `Você é um assistente financeiro especialista em extrair dados de extratos bancários brasileiros.
+Leia o extrato bancário em anexo (PDF) e extraia todas as transações financeiras.
+
+REGRAS ESTritas:
+1. Retorne APENAS um JSON válido. Não inclua texto, marcações markdown ou explicações. O JSON deve ser um array de objetos.
+2. Cada objeto deve ter exatamente esta estrutura:
+{
+  "date": "YYYY-MM-DD",
+  "title": "Descrição exata da transação",
+  "amount": 150.50, // Número positivo, use ponto decimal, sem 'R$'
+  "type": "income" // ou "expense"
+}
+3. Ignore saldos anteriores, resumos de fatura ou textos que não são transações reais.
+4. Se o valor for negativo no extrato, classifique como "expense" e deixe o valor positivo.
+5. Se não encontrar nenhuma transação, retorne um array vazio: []`;
+
+  const body = {
+    contents: [
+      {
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: "application/pdf", data: base64Pdf } }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      response_mime_type: "application/json",
+    }
+  };
+
+  try {
+    const response = await fetch(GEMINI_FLASH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) throw new Error('Falha ao processar PDF com a IA');
+
+    const data = await response.json();
+    const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    if (!resultText) return [];
+    
+    const cleanJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err) {
+    console.error('Erro na extração de PDF (Transações):', err);
+    throw new Error('Falha ao extrair dados do PDF.');
+  }
+}
+
+/**
+ * Lê notas de corretagem ou extrato B3 em PDF via IA e retorna as operações de investimento.
+ * @param {string} base64Pdf - O conteúdo do PDF em base64
+ */
+export async function extractInvestmentsFromPDF(base64Pdf) {
+  const prompt = `Você é um assistente financeiro especialista em ler notas de corretagem brasileiras (B3).
+Leia a nota de corretagem/extrato em anexo (PDF) e extraia todas as transações de compra e venda de ativos.
+
+REGRAS ESTritas:
+1. Retorne APENAS um JSON válido. Não inclua marcações markdown ou explicações. O JSON deve ser um array de objetos.
+2. Cada objeto deve ter exatamente esta estrutura:
+{
+  "date": "YYYY-MM-DD",
+  "ticker": "PETR4", // Código do ativo com até 5 a 6 letras (ex: VALE3, BOVA11)
+  "type": "buy", // "buy" para compra (C), "sell" para venda (V)
+  "quantity": 100, // Quantidade inteira
+  "price": 35.50 // Preço unitário, use ponto decimal
+}
+3. Ignore taxas, emolumentos, IRRF e resumos. Extraia apenas as linhas de negociação dos ativos.
+4. Se não encontrar nenhuma transação de ativo, retorne um array vazio: []`;
+
+  const body = {
+    contents: [
+      {
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: "application/pdf", data: base64Pdf } }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      response_mime_type: "application/json",
+    }
+  };
+
+  try {
+    const response = await fetch(GEMINI_FLASH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) throw new Error('Falha ao processar PDF de investimentos com a IA');
+
+    const data = await response.json();
+    const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    if (!resultText) return [];
+    
+    const cleanJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err) {
+    console.error('Erro na extração de PDF (Investimentos):', err);
+    throw new Error('Falha ao extrair investimentos do PDF.');
+  }
+}

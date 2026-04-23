@@ -127,7 +127,7 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
         </div>
       )}
 
-      <div style={{ flex: 1, display: 'flex', gap: compactMode ? '0' : '1.5rem', minHeight: 0 }}>
+      <div className="ai-layout-container" style={{ gap: compactMode ? '0' : '1.5rem' }}>
         {/* Main Chat Area */}
         <div style={{
           flex: 1,
@@ -334,7 +334,7 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
 
         {/* Right Sidebar - Quick Actions */}
         {!compactMode && (
-          <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div className="ai-suggestions-sidebar">
             
             <div style={{ 
               background: 'rgba(10,10,18,0.7)',

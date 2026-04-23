@@ -58,7 +58,9 @@ import {
   MoreVertical,
   CheckSquare,
   ArrowRightLeft,
-  StickyNote
+  StickyNote,
+  Filter,
+  Globe
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -67,11 +69,11 @@ import autoTable from 'jspdf-autotable';
 import { parseOFX } from '../utils/ofxParser';
 import { predictCategory } from '../utils/smartCategory';
 import AiAssistant from '../components/AiAssistant';
-import { askGemini, batchCategorizeTransactions } from '../utils/gemini';
+import { askGemini, batchCategorizeTransactions, extractTransactionsFromPDF, extractInvestmentsFromPDF } from '../utils/gemini';
 import { motion, AnimatePresence } from 'framer-motion';
 import './Dashboard.css';
 
-const APP_VERSION = '1.6.0.2';
+const APP_VERSION = '1.8.2';
 
 const CATEGORIES = [
   { id: 'Alimentação', icon: Utensils },
@@ -186,8 +188,10 @@ export default function Dashboard() {
 
   // B3 Importer State
   const [isB3ImportOpen, setIsB3ImportOpen] = useState(false);
-  const [b3Preview, setB3Preview] = useState(null); // { rows: [...] }
+  const [b3Preview, setB3Preview] = useState(null);
   const [b3Importing, setB3Importing] = useState(false);
+  const [b3PdfImporting, setB3PdfImporting] = useState(false);
+  const b3PdfInputRef = useRef(null);
   const [b3DragOver, setB3DragOver] = useState(false);
 
   // Stock Quotes State
@@ -199,57 +203,288 @@ export default function Dashboard() {
   const [isBulkCategoryModalOpen, setIsBulkCategoryModalOpen] = useState(false);
   const [bulkCategoryTarget, setBulkCategoryTarget] = useState('');
 
-  // Market & Investor Data
-  const [marketNews, setMarketNews] = useState([
-    { id: 1, title: 'Ibovespa mostra resiliência em meio a cenário externo', date: 'Hoje', source: 'Fync News' },
-    { id: 2, title: 'Mercado projeta nova alta na Selic para próximo Copom', date: '2h atrás', source: 'Fync News' },
-    { id: 3, title: 'Dólar opera em estabilidade aguardando dados de inflação', date: '3h atrás', source: 'Fync News' }
-  ]);
-  const [marketIndices, setMarketIndices] = useState({
-    ibov: { label: 'IBOVESPA', value: '---', change: '0.00%' },
-    ifix: { label: 'IFIX', value: '---', change: '0.00%' },
-    dolar: { label: 'DÓLAR', value: '---', change: '0.00%' }
-  });
+  // Market & Investor Data — Real data via brapi.dev
+  const [marketNews, setMarketNews] = useState([]);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
+  const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
+  const [newsFilterDate, setNewsFilterDate] = useState('');
+  const [isAnalyzingStock, setIsAnalyzingStock] = useState(false);
+  const [stockAiAnalysis, setStockAiAnalysis] = useState(null);
+  const [marketIndices, setMarketIndices] = useState({
+    ibov:  { label: 'IBOVESPA', ticker: '^BVSP',   value: '---', change: '+0.00%', raw: null },
+    ifix:  { label: 'IFIX',     ticker: 'IFIX',     value: '---', change: '+0.00%', raw: null },
+    sp500: { label: 'S&P 500',  ticker: '^GSPC',   value: '---', change: '+0.00%', raw: null },
+    nasdaq:{ label: 'NASDAQ',   ticker: '^IXIC',   value: '---', change: '+0.00%', raw: null },
+    dolar: { label: 'DÓLAR',   ticker: 'USDBRL',   value: '---', change: '+0.00%', raw: null },
+    btc:   { label: 'BITCOIN',  ticker: 'BTCBRL',   value: '---', change: '+0.00%', raw: null },
+    selic: { label: 'SELIC',   ticker: null,        value: '---', change: '',       raw: null },
+  });
+  const [isIndicesLoading, setIsIndicesLoading] = useState(false);
+
+  // Index detail modal
+  const [indexDetailModal, setIndexDetailModal] = useState(null); // { key, label, ticker }
+  const [indexDetailData, setIndexDetailData] = useState(null);
+  const [indexDetailLoading, setIndexDetailLoading] = useState(false);
+
+  // Stock search modal
+  const [isStockSearchOpen, setIsStockSearchOpen] = useState(false);
+  const [stockSearchQuery, setStockSearchQuery] = useState('');
+  const [stockSearchResults, setStockSearchResults] = useState([]);
+  const [stockSearchLoading, setStockSearchLoading] = useState(false);
+  const [selectedStockDetail, setSelectedStockDetail] = useState(null);
+  const [selectedStockDetailLoading, setSelectedStockDetailLoading] = useState(false);
+  const stockSearchDebounceRef = useRef(null);
 
   const fetchMarketIndices = async () => {
+    setIsIndicesLoading(true);
     try {
-      const tickers = ['^BVSP', '^IFIX', 'USDBRL=X'];
-      const results = {};
+      const updates = {};
 
-      for (const ticker of tickers) {
-        const response = await fetch(`/api/yahoo/v8/finance/chart/${ticker}?interval=1d&range=1d`);
-        if (response.ok) {
-          const data = await response.json();
-          const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-          const prevClose = data?.chart?.result?.[0]?.meta?.chartPreviousClose;
-
-          if (price) {
-            const change = prevClose ? ((price - prevClose) / prevClose * 100) : 0;
-            const changeStr = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
-
-            if (ticker === '^BVSP') results.ibov = { label: 'IBOVESPA', value: price.toLocaleString('pt-BR'), change: changeStr };
-            if (ticker === '^IFIX') results.ifix = { label: 'IFIX', value: price.toLocaleString('pt-BR'), change: changeStr };
-            if (ticker === 'USDBRL=X') results.dolar = { label: 'DÓLAR', value: price.toFixed(2).replace('.', ','), change: changeStr };
+      // 1. IBOVESPA, S&P 500, NASDAQ via Yahoo Finance
+      const yahooTickers = ['%5EBVSP', '%5EGSPC', '%5EIXIC'];
+      for (const t of yahooTickers) {
+        try {
+          const res = await fetch(`/api/yahoo/v8/finance/chart/${t}?interval=1d&range=1d`, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const meta = data?.chart?.result?.[0]?.meta;
+            if (meta?.regularMarketPrice) {
+              const price = meta.regularMarketPrice;
+              const prev = meta.chartPreviousClose || meta.previousClose || price;
+              const pct = ((price - prev) / prev) * 100;
+              const key = t === '%5EBVSP' ? 'ibov' : t === '%5EGSPC' ? 'sp500' : 'nasdaq';
+              updates[key] = {
+                label: key === 'ibov' ? 'IBOVESPA' : key === 'sp500' ? 'S&P 500' : 'NASDAQ',
+                ticker: t.replace('%5E', '^'),
+                value: price.toLocaleString('pt-BR', { maximumFractionDigits: (key === 'ibov' ? 0 : 2) }),
+                change: (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
+                raw: { ...meta, regularMarketPrice: price, regularMarketChangePercent: pct }
+              };
+            }
           }
-        }
+        } catch (e) { console.warn(`Yahoo fetch failed for ${t}:`, e.message); }
       }
 
-      if (Object.keys(results).length > 0) {
-        setMarketIndices(prev => ({ ...prev, ...results }));
+      // 2. DÓLAR, EURO e BITCOIN via AwesomeAPI
+      try {
+        const fxRes = await fetch('/api/awesomeapi/json/last/USD-BRL,EUR-BRL,BTC-BRL');
+        if (fxRes.ok) {
+          const fx = await fxRes.json();
+          if (fx.USDBRL) {
+            const bid = parseFloat(fx.USDBRL.bid);
+            const pct = parseFloat(fx.USDBRL.pctChange);
+            updates.dolar = {
+              label: 'DÓLAR', ticker: 'USDBRL',
+              value: 'R$ ' + bid.toFixed(4).replace('.', ','),
+              change: (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
+              raw: { regularMarketPrice: bid, regularMarketChangePercent: pct }
+            };
+          }
+          if (fx.BTCBRL) {
+            const bid = parseFloat(fx.BTCBRL.bid);
+            const pct = parseFloat(fx.BTCBRL.pctChange);
+            updates.btc = {
+              label: 'BITCOIN', ticker: 'BTCBRL',
+              value: 'R$ ' + bid.toLocaleString('pt-BR'),
+              change: (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
+              raw: { regularMarketPrice: bid, regularMarketChangePercent: pct }
+            };
+          }
+        }
+      } catch (e) { console.warn('FX fetch failed:', e.message); }
+
+      // 3. IFIX via Brapi (Fallback to ^BVSP if fails, but IFIX is specific)
+      try {
+        const ifixRes = await fetch('/api/brapi/api/quote/IFIX?range=1d&interval=1d');
+        if (ifixRes.ok) {
+          const data = await ifixRes.json();
+          const r = data.results?.[0];
+          if (r) {
+            updates.ifix = {
+              label: 'IFIX', ticker: 'IFIX',
+              value: r.regularMarketPrice ? r.regularMarketPrice.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) : '---',
+              change: r.regularMarketChangePercent ? ((r.regularMarketChangePercent >= 0 ? '+' : '') + r.regularMarketChangePercent.toFixed(2) + '%') : '+0.00%',
+              raw: r
+            };
+          }
+        }
+      } catch (e) { console.warn('IFIX fetch failed:', e.message); }
+
+      // 4. SELIC via BCB (Banco Central) - More reliable
+      try {
+        const selicRes = await fetch('https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json');
+        if (selicRes.ok) {
+          const selicData = await selicRes.json();
+          if (selicData && selicData[0]) {
+            updates.selic = {
+              label: 'SELIC', ticker: null,
+              value: parseFloat(selicData[0].valor).toFixed(2).replace('.', ',') + '% a.a.',
+              change: '',
+              raw: selicData[0]
+            };
+          }
+        }
+      } catch (e) { console.warn('SELIC fetch failed:', e.message); }
+
+      if (Object.keys(updates).length > 0) {
+        setMarketIndices(prev => ({ ...prev, ...updates }));
       }
     } catch (err) {
       console.error('Erro ao buscar índices:', err);
+    } finally {
+      setIsIndicesLoading(false);
+    }
+  };
+
+  const fetchMarketNews = async () => {
+    setIsNewsLoading(true);
+    try {
+      // Use InfoMoney RSS feed (Direct feed is better)
+      const rssRes = await fetch('/api/rss/feed/');
+      if (rssRes.ok) {
+        const text = await rssRes.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'application/xml');
+        const items = Array.from(doc.querySelectorAll('item')).slice(0, 20);
+        const news = items.map((item, i) => {
+          const pubDate = item.querySelector('pubDate')?.textContent;
+          const dateObj = pubDate ? new Date(pubDate) : new Date();
+          const isValidDate = !isNaN(dateObj.getTime());
+          const diffMs = Date.now() - dateObj.getTime();
+          const diffHrs = Math.floor(diffMs / 3600000);
+          const dateLabel = !isValidDate ? 'Data indisponível' : diffHrs < 1 ? 'Agora' : diffHrs < 24 ? `${diffHrs}h atrás` : dateObj.toLocaleDateString('pt-BR');
+          return {
+            id: i,
+            title: item.querySelector('title')?.textContent || '',
+            url: item.querySelector('link')?.textContent || '#',
+            source: 'InfoMoney',
+            date: dateLabel,
+            rawDate: isValidDate ? dateObj.toISOString() : null
+          };
+        }).filter(n => n.title);
+        if (news.length > 0) setMarketNews(news);
+      }
+    } catch (err) {
+      console.warn('Erro ao buscar notícias:', err);
+    } finally {
+      setIsNewsLoading(false);
+    }
+  };
+
+  const openIndexDetail = async (key) => {
+    const idx = marketIndices[key];
+    if (!idx || !idx.ticker) return;
+    setIndexDetailModal({ key, label: idx.label, ticker: idx.ticker });
+    setIndexDetailData(idx.raw ? { quote: idx.raw, history: [] } : null);
+    setIndexDetailLoading(true);
+    try {
+      // For some tickers like USDBRL or BTCBRL, history might need special handling
+      // We'll try the standard Brapi quote first
+      const encodedTicker = encodeURIComponent(idx.ticker);
+      const res = await fetch(`/api/brapi/api/quote/${encodedTicker}?range=1d&interval=5m`);
+      if (res.ok) {
+        const data = await res.json();
+        const r = data.results?.[0];
+        if (r) {
+          setIndexDetailData({
+            quote: r,
+            history: (r?.historicalDataPrice || []).map(p => ({
+              time: new Date(p.date * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+              value: p.close
+            }))
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao buscar detalhe do índice:', e);
+    } finally {
+      setIndexDetailLoading(false);
+    }
+  };
+
+  const searchStocks = async (query) => {
+    if (!query || query.length < 1) { setStockSearchResults([]); return; }
+    setStockSearchLoading(true);
+    try {
+      const res = await fetch(`/api/brapi/api/quote/list?search=${encodeURIComponent(query)}&limit=12`);
+      if (res.ok) {
+        const data = await res.json();
+        setStockSearchResults(data.stocks || []);
+      }
+    } catch (e) {
+      console.error('Erro na busca de ações:', e);
+    } finally {
+      setStockSearchLoading(false);
+    }
+  };
+
+  const handleAiStockAnalysis = async () => {
+    if (!selectedStockDetail) return;
+    setIsAnalyzingStock(true);
+    setStockAiAnalysis(null);
+    try {
+      const prompt = `Analise tecnicamente e fundamentalista o ativo ${selectedStockDetail.symbol} com base nos dados:
+      Preço: R$ ${selectedStockDetail.regularMarketPrice}
+      Variação: ${selectedStockDetail.regularMarketChangePercent}%
+      P/L: ${selectedStockDetail.priceEarnings || 'N/A'}
+      Market Cap: ${selectedStockDetail.marketCap || 'N/A'}
+      Máxima Dia: ${selectedStockDetail.regularMarketDayHigh}
+      Mínima Dia: ${selectedStockDetail.regularMarketDayLow}
+      
+      Forneça uma análise concisa (máximo 500 caracteres) sobre o momento do ativo e se os indicadores sugerem uma oportunidade ou risco. Seja direto e profissional.`;
+      
+      const analysis = await askGemini(prompt);
+      setStockAiAnalysis(analysis);
+    } catch (err) {
+      console.error('Erro na análise IA:', err);
+      setStockAiAnalysis('Não foi possível realizar a análise no momento.');
+    } finally {
+      setIsAnalyzingStock(false);
+    }
+  };
+
+  const openStockDetail = async (ticker) => {
+    setSelectedStockDetail({ ticker, loading: true });
+    setStockAiAnalysis(null);
+    setSelectedStockDetailLoading(true);
+    try {
+      const res = await fetch(`/api/brapi/api/quote/${encodeURIComponent(ticker)}?range=1d&interval=5m&fundamental=true`);
+      if (res.ok) {
+        const data = await res.json();
+        const r = data.results?.[0];
+        if (r) {
+          setSelectedStockDetail({
+            ...r,
+            history: (r.historicalDataPrice || []).map(p => ({
+              time: new Date(p.date * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+              value: p.close
+            }))
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao buscar detalhe da ação:', e);
+    } finally {
+      setSelectedStockDetailLoading(false);
     }
   };
 
   useEffect(() => {
     if (activeTab === 'investments') {
       fetchMarketIndices();
-      const interval = setInterval(fetchMarketIndices, 60000 * 5); // 5 min
-      return () => clearInterval(interval);
+      fetchMarketNews();
+      const indexInterval = setInterval(fetchMarketIndices, 60000 * 5);
+      return () => clearInterval(indexInterval);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (stockSearchDebounceRef.current) clearTimeout(stockSearchDebounceRef.current);
+    stockSearchDebounceRef.current = setTimeout(() => searchStocks(stockSearchQuery), 400);
+    return () => clearTimeout(stockSearchDebounceRef.current);
+  }, [stockSearchQuery]);
 
   // OFX Import state
   const [ofxPreview, setOfxPreview] = useState(null); // { items: [...], walletId: '' }
@@ -337,6 +572,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [confirmState, setConfirmState] = useState({ isOpen: false, title: '', message: '', onConfirm: null, type: 'danger' });
   const [isAiFloatingOpen, setIsAiFloatingOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [expandedInstallmentId, setExpandedInstallmentId] = useState(null);
   const [activeInstallmentTab, setActiveInstallmentTab] = useState('active'); // 'active' | 'finalized'
   const [activeSubTab, setActiveSubTab] = useState('all'); // 'all' | 'active' | 'inactive'
@@ -349,6 +585,12 @@ export default function Dashboard() {
   const [txSort, setTxSort] = useState('recentes');
   const [txShowHidden, setTxShowHidden] = useState(false);
   const [isRangePickerOpen, setIsRangePickerOpen] = useState(false);
+  const [calendarOffset, setCalendarOffset] = useState(0);
+  const [txShowCount, setTxShowCount] = useState(15);
+
+  useEffect(() => {
+    setTxShowCount(15);
+  }, [txType, txCategory, txWallet, txSearch, txSort, filterMode, filterMonth, filterStartDate, filterEndDate, filterCategory]);
 
   // Apply Theme globally
   useEffect(() => {
@@ -868,7 +1110,7 @@ export default function Dashboard() {
     });
 
     return list;
-  }, [baseProjectedList, txType, txCategory, txWallet, txSearch, searchTerm, txSort, filterCategory]);
+  }, [baseProjectedList, txType, txCategory, txWallet, txSearch, searchTerm, txSort, filterCategory, filterMode, filterMonth, filterStartDate, filterEndDate]);
 
   // Totals for the current filtered view
   const txTotals = useMemo(() => {
@@ -1242,7 +1484,7 @@ export default function Dashboard() {
     setCategory(overrideCategory);
     setSubCategory(overrideSub);
     setTicker('');
-    setTransactionDate(new Date().toISOString().split('T')[0]);
+    setTransactionDate(currentDate.toISOString().split('T')[0]);
     setSelectedWalletId(wallets.length > 0 ? wallets[0].id : '');
     setKeepModalOpen(false);
     setIsModalOpen(true);
@@ -1429,9 +1671,42 @@ export default function Dashboard() {
     const file = e.target.files[0];
     if (!file) return;
     if (pdfImportRef.current) pdfImportRef.current.value = '';
-    showToast('⚠️ Importação de PDF: lemos o texto do arquivo e tentamos extrair lançamentos. Para melhores resultados, use OFX (extrato bancário oficial).', 'info');
-    // PDF text extraction requires pdf.js; for now show a helpful message
-    showToast('📄 Importação de PDF disponível em breve. Por enquanto use o OFX do seu banco.', 'error');
+    
+    showToast('Enviando PDF para a inteligência artificial ler as transações. Isso pode levar alguns segundos...', 'info');
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64Data = reader.result.split(',')[1];
+        const extractedTransactions = await extractTransactionsFromPDF(base64Data);
+        
+        if (!extractedTransactions || extractedTransactions.length === 0) {
+          showToast('Nenhuma transação financeira foi encontrada no PDF.', 'error');
+          return;
+        }
+
+        let importCount = 0;
+        for (const tx of extractedTransactions) {
+          if (!tx.title || !tx.amount) continue;
+          await addTransaction({
+            title: tx.title,
+            amount: Math.abs(parseFloat(tx.amount)),
+            type: tx.type === 'income' ? 'income' : 'expense',
+            date: tx.date || new Date().toISOString().split('T')[0],
+            category: 'Outros', // AI will later categorize or we leave as default
+            walletId: wallets[0]?.id || null,
+            status: 'paid'
+          });
+          importCount++;
+        }
+        
+        showToast(`✅ ${importCount} transações importadas do PDF com sucesso!`, 'success');
+      } catch (err) {
+        console.error(err);
+        showToast('Erro ao ler PDF com a IA. Certifique-se de que é um extrato válido.', 'error');
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   // Excel/CSV Import - reads rows and maps them to transactions
@@ -1773,7 +2048,7 @@ export default function Dashboard() {
         `R$ ${parseFloat(t.amount).toFixed(2)}`
       ]
     });
-    doc.autoTable({
+    autoTable(doc, {
       startY: 20,
       head: [['Data', 'Título', 'Categoria', 'Tipo', 'Carteira', 'Valor']],
       body: tableData
@@ -1978,8 +2253,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div style={{ overflowY: 'auto', overflowX: 'auto', flex: 1 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div className="tx-table-container">
+          <table className="tx-table">
             <thead>
               <tr style={{ color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
                 <th style={{ padding: '1rem', width: '48px' }}>
@@ -2016,7 +2291,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {filteredTransactions.map(t => {
+              {filteredTransactions.slice(0, txShowCount).map(t => {
                 const { icon: StoreIcon, color: iconColor, domain, isBrand } = getStoreIcon(t.title);
                 const wallet = wallets.find(w => w.id === t.walletId);
 
@@ -2126,6 +2401,16 @@ export default function Dashboard() {
           </table>
           {filteredTransactions.length === 0 && (
             <div className="text-center text-muted" style={{ padding: '5rem' }}>Nenhum lançamento encontrado para esses filtros.</div>
+          )}
+          {filteredTransactions.length > txShowCount && (
+            <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
+              <button 
+                className="btn btn-secondary" 
+                onClick={() => setTxShowCount(prev => prev + 50)}
+              >
+                Carregar mais transações
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -2524,6 +2809,7 @@ export default function Dashboard() {
       const latest = g.installments[g.installments.length - 1];
       g.currentInstallment = latest.current;
       g.monthlyAmount = parseFloat(latest.amount);
+      g.latestDate = latest.date;
 
       // FIX GRAVE: Matemática determinística sem duplicidades e somas quebradas
       g.paidValue = g.currentInstallment * g.monthlyAmount;
@@ -2684,10 +2970,10 @@ export default function Dashboard() {
                         {[...Array(group.totalInstallments)].map((_, idx) => {
                           const n = idx + 1;
                           const isPaid = n <= group.currentInstallment;
-                          // Estimate month logic
-                          const date = new Date();
+                          // Use the exact date from the latest recorded transaction
+                          const date = group.latestDate ? new Date(group.latestDate + 'T12:00:00') : new Date();
                           date.setMonth(date.getMonth() - (group.currentInstallment - n));
-                          const monthStr = date.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+                          const monthStr = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
 
                           return (
                             <div key={n} className={`fync-timeline-row ${isPaid ? 'paid' : ''}`}>
@@ -2974,7 +3260,7 @@ export default function Dashboard() {
 
     const renderCalendar = (monthOffset) => {
       const date = new Date();
-      date.setMonth(date.getMonth() + monthOffset);
+      date.setMonth(date.getMonth() + calendarOffset + monthOffset);
       const year = date.getFullYear();
       const month = date.getMonth();
       const monthName = new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(date);
@@ -3014,8 +3300,10 @@ export default function Dashboard() {
 
       return (
         <div className="calendar-month-view">
-          <div className="calendar-header">
+          <div className="calendar-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            {monthOffset === -1 ? <button onClick={() => setCalendarOffset(prev => prev - 1)} style={{ background: 'none', border: 'none', color: 'var(--text-color)', cursor: 'pointer', padding: '0 5px' }}><ChevronLeft size={16} /></button> : <div style={{ width: 26 }} />}
             <span>{monthName} {year}</span>
+            {monthOffset === 0 ? <button onClick={() => setCalendarOffset(prev => prev + 1)} style={{ background: 'none', border: 'none', color: 'var(--text-color)', cursor: 'pointer', padding: '0 5px' }}><ChevronRight size={16} /></button> : <div style={{ width: 26 }} />}
           </div>
           <div className="calendar-days-grid">
             {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map(day => <div key={day} className="day-header">{day}</div>)}
@@ -3071,15 +3359,28 @@ export default function Dashboard() {
                 <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".ofx" style={{ display: 'none' }} />
                 <input type="file" ref={pdfImportRef} onChange={handlePDFImport} accept=".pdf" style={{ display: 'none' }} />
                 <input type="file" ref={excelImportRef} onChange={handleExcelImport} accept=".xlsx,.xls,.csv" style={{ display: 'none' }} />
-                <button className="btn btn-secondary" onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ background: 'rgba(59, 130, 246, 0.1)', borderColor: 'rgba(59,130,246,0.5)', color: '#60a5fa' }}>
-                  <UploadCloud size={16} /> OFX
-                </button>
-                <button className="btn btn-secondary" onClick={() => pdfImportRef.current && pdfImportRef.current.click()} style={{ background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.5)', color: '#f87171' }}>
-                  <FileDown size={16} /> PDF
-                </button>
-                <button className="btn btn-secondary" onClick={() => excelImportRef.current && excelImportRef.current.click()} style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.5)', color: '#34d399' }}>
-                  <FileDown size={16} /> Excel
-                </button>
+                <div style={{ display: 'flex', gap: '0.25rem', background: 'rgba(255,255,255,0.03)', padding: '0.25rem', borderRadius: '12px' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: '0 0.5rem' }}>Importar:</span>
+                  <button className="btn btn-secondary" onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ background: 'rgba(59, 130, 246, 0.1)', borderColor: 'rgba(59,130,246,0.3)', color: '#60a5fa', padding: '6px 10px', fontSize: '0.75rem' }}>
+                    <UploadCloud size={14} style={{ marginRight: '4px' }} /> OFX
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => pdfImportRef.current && pdfImportRef.current.click()} style={{ background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.3)', color: '#f87171', padding: '6px 10px', fontSize: '0.75rem' }}>
+                    <FileDown size={14} style={{ marginRight: '4px' }} /> PDF
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => excelImportRef.current && excelImportRef.current.click()} style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: '#34d399', padding: '6px 10px', fontSize: '0.75rem' }}>
+                    <FileDown size={14} style={{ marginRight: '4px' }} /> Excel
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.25rem', background: 'rgba(255,255,255,0.03)', padding: '0.25rem', borderRadius: '12px' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: '0 0.5rem' }}>Exportar:</span>
+                  <button className="btn btn-secondary" onClick={exportToPDF} style={{ background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.3)', color: '#f87171', padding: '6px 10px', fontSize: '0.75rem' }}>
+                    <FileDown size={14} style={{ marginRight: '4px' }} /> PDF
+                  </button>
+                  <button className="btn btn-secondary" onClick={exportToExcel} style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: '#34d399', padding: '6px 10px', fontSize: '0.75rem' }}>
+                    <FileText size={14} style={{ marginRight: '4px' }} /> Excel
+                  </button>
+                </div>
                 <button className="btn btn-primary" onClick={() => openNewTransaction('expense')}>
                   <Plus size={18} /> Nova Transação
                 </button>
@@ -3124,7 +3425,7 @@ export default function Dashboard() {
 
               <select className="filter-select" value={txWallet} onChange={e => setTxWallet(e.target.value)}>
                 <option value="Todas">Todas as Contas</option>
-                {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                {wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.type === 'credit' ? ' (cartão)' : ''}</option>)}
               </select>
 
               <select className="filter-select" value={txType} onChange={e => setTxType(e.target.value)}>
@@ -3160,7 +3461,6 @@ export default function Dashboard() {
         )}
 
         {renderMainTransactionTable()}
-        {renderRangePicker()}
       </div>
     );
   };
@@ -3373,10 +3673,9 @@ export default function Dashboard() {
     }
   };
 
-  const renderInvestments = () => {
+  const investmentData = useMemo(() => {
     const investmentTxs = transactions.filter(t => t.category === 'Investimentos');
 
-    // Portfolio Consolidation Logic
     const portfolio = investmentTxs.reduce((acc, t) => {
       if (!t.ticker) return acc;
       if (!acc[t.ticker]) acc[t.ticker] = { ticker: t.ticker, quantity: 0, totalInvested: 0, dividends: 0, category: t.category };
@@ -3392,11 +3691,21 @@ export default function Dashboard() {
       return acc;
     }, {});
 
-    const portfolioList = Object.values(portfolio).filter(p => p.quantity > 0 || p.dividends > 0);
-    const totalInvestedPortfolio = portfolioList.reduce((sum, p) => sum + p.totalInvested, 0);
-    const totalDividendsAccumulated = portfolioList.reduce((sum, p) => sum + p.dividends, 0);
+    const portfolioList = Object.values(portfolio).filter(p => p.quantity > 0 || p.dividends > 0).map(p => {
+      const currentPrice = stockQuotes[p.ticker] || stockQuotes[`${p.ticker}.SA`] || 0;
+      const currentValue = p.quantity * currentPrice;
+      const profitLoss = currentValue > 0 ? (currentValue - p.totalInvested) : 0;
+      return { ...p, currentPrice, currentValue, profitLoss };
+    });
 
-    // Data for Allocation Chart
+    const totalInvestedPortfolio = portfolioList.reduce((sum, p) => sum + p.totalInvested, 0);
+    const totalCurrentValue = portfolioList.reduce((sum, p) => sum + (p.currentValue || 0), 0);
+    const totalDividendsAccumulated = portfolioList.reduce((sum, p) => sum + p.dividends, 0);
+    const totalProfitLoss = totalCurrentValue > 0 ? (totalCurrentValue - totalInvestedPortfolio) : 0;
+    const totalReturnPct = totalInvestedPortfolio > 0 
+      ? (((totalCurrentValue + totalDividendsAccumulated) / totalInvestedPortfolio - 1) * 100) 
+      : 0;
+
     const allocationData = INVESTMENT_CATEGORIES.map(cat => {
       const value = investmentTxs
         .filter(t => t.title.toLowerCase().includes(cat.id.toLowerCase()) || t.category === cat.id)
@@ -3404,29 +3713,74 @@ export default function Dashboard() {
       return { name: cat.id, value };
     }).filter(d => d.value > 0);
 
+    return { 
+      portfolioList, totalInvestedPortfolio, totalCurrentValue, 
+      totalDividendsAccumulated, totalProfitLoss, totalReturnPct, allocationData 
+    };
+  }, [transactions, stockQuotes]);
+
+  const renderInvestments = () => {
+    const { 
+      portfolioList, totalInvestedPortfolio, totalCurrentValue, 
+      totalDividendsAccumulated, totalProfitLoss, totalReturnPct, allocationData 
+    } = investmentData;
+
+
     return (
       <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {/* Market Ticker Tape */}
-        <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', padding: '0.5rem 0', scrollbarWidth: 'none' }}>
-          {Object.values(marketIndices).map(idx => (
-            <div key={idx.label} className="glass-panel" style={{ padding: '0.75rem 1.25rem', minWidth: '180px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.03)' }}>
+        {/* Market Ticker Tape - Clickable Real Data */}
+        <div className="market-indices-row">
+          {Object.entries(marketIndices).map(([key, idx]) => (
+            <div
+              key={key}
+              className="glass-panel"
+              onClick={() => idx.ticker && openIndexDetail(key)}
+              style={{
+                padding: '0.75rem 1.25rem', minWidth: '170px',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                borderRadius: '14px', border: '1px solid rgba(255,255,255,0.06)',
+                cursor: idx.ticker ? 'pointer' : 'default',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={e => { if (idx.ticker) e.currentTarget.style.borderColor = 'rgba(99,102,241,0.4)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
+            >
               <div>
-                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '1px' }}>{idx.label}</div>
-                <div style={{ fontSize: '1rem', fontWeight: 800 }}>{idx.value}</div>
+                <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {idx.label}
+                  {idx.ticker && <span style={{ opacity: 0.4, fontSize: '0.55rem' }}>↗</span>}
+                </div>
+                <div style={{ fontSize: '1rem', fontWeight: 800, marginTop: '2px' }}>
+                  {isIndicesLoading && idx.value === '---' ? <span style={{ opacity: 0.3, fontSize: '0.75rem' }}>carregando...</span> : idx.value}
+                </div>
               </div>
-              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: idx.change.includes('+') ? 'var(--success-color)' : 'var(--danger-color)' }}>
-                {idx.change}
-              </div>
+              {idx.change && (
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: idx.change.startsWith('+') ? 'var(--success-color)' : 'var(--danger-color)', marginLeft: '0.5rem', whiteSpace: 'nowrap' }}>
+                  {idx.change}
+                </div>
+              )}
             </div>
           ))}
-          <button className="btn btn-secondary mini" style={{ minWidth: '120px' }} onClick={fetchMarketIndices}>
-            <RefreshCw size={14} className={isQuotesLoading ? 'animate-spin' : ''} /> Atualizar
+          <button
+            className="btn btn-secondary mini"
+            style={{ minWidth: '120px', flexShrink: 0 }}
+            onClick={fetchMarketIndices}
+            disabled={isIndicesLoading}
+          >
+            <RefreshCw size={14} className={isIndicesLoading ? 'animate-spin' : ''} /> Atualizar
+          </button>
+          <button
+            className="btn btn-primary mini"
+            style={{ minWidth: '130px', flexShrink: 0, fontSize: '0.75rem' }}
+            onClick={() => { setIsStockSearchOpen(true); setStockSearchQuery(''); setSelectedStockDetail(null); }}
+          >
+            <Search size={14} /> Buscar Ação
           </button>
         </div>
 
         <div className="dashboard-header" style={{ marginBottom: 0 }}>
           <div>
-            <h1 className="dashboard-title">Hub do Investidor <span style={{ fontSize: '0.9rem', verticalAlign: 'middle', opacity: 0.5 }}>v1.6</span></h1>
+            <h1 className="dashboard-title">Hub do Investidor <span style={{ fontSize: '0.9rem', verticalAlign: 'middle', opacity: 0.5 }}>v1.7.1</span></h1>
             <p className="dashboard-subtitle">Monitoramento em tempo real, notícias e evolução patrimonial.</p>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -3439,7 +3793,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '1.5rem' }}>
+        <div className="investments-main-layout">
           {/* Main Content Area */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             {/* Evolution Chart */}
@@ -3469,18 +3823,23 @@ export default function Dashboard() {
             </div>
 
             {/* Portfolio Summary Cards */}
-            <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 0 }}>
+            <div className="stats-grid">
               <div className="stat-card">
                 <div className="stat-header"><span className="stat-title">Patrimônio Atual</span><TrendingUp size={20} color="var(--primary-color)" /></div>
-                <div className="stat-value" style={{ fontSize: '1.75rem' }}>{formatCurrency(totalInvestedPortfolio)}</div>
+                <div className="stat-value" style={{ fontSize: '1.75rem' }}>{formatCurrency(totalCurrentValue || totalInvestedPortfolio)}</div>
+                <div style={{ fontSize: '0.7rem', color: totalProfitLoss >= 0 ? 'var(--success-color)' : 'var(--danger-color)', fontWeight: 700, marginTop: '4px' }}>
+                  {totalProfitLoss >= 0 ? '+' : ''}{formatCurrency(totalProfitLoss)} ({totalInvestedPortfolio > 0 ? (totalProfitLoss/totalInvestedPortfolio*100).toFixed(2) : '0.00'}%)
+                </div>
               </div>
               <div className="stat-card">
                 <div className="stat-header"><span className="stat-title">Proventos Totais</span><ArrowUpRight size={20} color="var(--success-color)" /></div>
                 <div className="stat-value" style={{ fontSize: '1.75rem', color: 'var(--success-color)' }}>{formatCurrency(totalDividendsAccumulated)}</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>Acumulado histórico</div>
               </div>
               <div className="stat-card">
-                <div className="stat-header"><span className="stat-title">Rentabilidade</span><Activity size={20} color="#818cf8" /></div>
-                <div className="stat-value" style={{ fontSize: '1.75rem' }}>{(totalInvestedPortfolio > 0 ? (totalDividendsAccumulated / totalInvestedPortfolio * 100) : 0).toFixed(2)}%</div>
+                <div className="stat-header"><span className="stat-title">Rentabilidade Total</span><Activity size={20} color="#818cf8" /></div>
+                <div className="stat-value" style={{ fontSize: '1.75rem', color: totalReturnPct >= 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>{totalReturnPct.toFixed(2)}%</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>Incluindo dividendos</div>
               </div>
             </div>
 
@@ -3534,23 +3893,47 @@ export default function Dashboard() {
 
           {/* Sidebar Area: News & Allocation */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {/* News Panel */}
-            <div className="glass-panel" style={{ padding: '1.25rem', borderRadius: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: '#818cf8' }}>
-                <Globe2 size={18} />
-                <h3 style={{ fontSize: '0.9rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Notícias</h3>
+            <div className="glass-panel" style={{ padding: '1.25rem', borderRadius: '20px', height: 'fit-content' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Globe size={18} color="var(--primary-color)" />
+                  <h3 style={{ fontSize: '0.9rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Notícias</h3>
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button className="btn-icon mini" onClick={() => setIsNewsModalOpen(true)} title="Filtrar por data">
+                    <Filter size={14} />
+                  </button>
+                  <button className="btn-icon mini" onClick={fetchMarketNews} disabled={isNewsLoading} title="Atualizar notícias">
+                    <RefreshCw size={14} className={isNewsLoading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {marketNews.map(news => (
-                  <div key={news.id} className="news-item-hover" style={{ padding: '0.75rem', borderRadius: '12px', background: 'rgba(255,255,255,0.02)', cursor: 'pointer', transition: 'all 0.2s' }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.25rem', lineHeight: '1.3' }}>{news.title}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                      <span>{news.source}</span>
-                      <span>{news.date}</span>
-                    </div>
-                  </div>
-                ))}
-                <button className="btn btn-secondary mini" style={{ width: '100%', marginTop: '0.5rem', fontSize: '0.7rem' }}>Ver Mais Notícias</button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {(() => {
+                  const filteredNews = newsFilterDate 
+                    ? marketNews.filter(n => {
+                        if (!n.rawDate) return false;
+                        try {
+                          return n.rawDate.split('T')[0] === newsFilterDate;
+                        } catch (e) { return false; }
+                      })
+                    : marketNews;
+                  
+                  if (isNewsLoading && filteredNews.length === 0) return <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Carregando notícias...</div>;
+                  if (filteredNews.length === 0) return <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Nenhuma notícia encontrada para este filtro.</div>;
+                  
+                  return filteredNews.map(news => (
+                    <a key={news.id} href={news.url || '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+                      <div className="news-item-hover" style={{ padding: '0.6rem 0.75rem', borderRadius: '10px', background: 'rgba(255,255,255,0.02)', cursor: 'pointer', transition: 'all 0.2s', borderLeft: '2px solid rgba(99,102,241,0.3)' }}>
+                        <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: '0.2rem', lineHeight: '1.35' }}>{news.title}</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: 'var(--text-muted)' }}>
+                          <span style={{ color: '#818cf8' }}>{news.source}</span>
+                          <span>{news.date}</span>
+                        </div>
+                      </div>
+                    </a>
+                  ));
+                })()}
               </div>
             </div>
 
@@ -3587,39 +3970,96 @@ export default function Dashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div>
                 <h3 className="font-bold flex items-center gap-2" style={{ color: '#3b82f6' }}>
-                  <FileDown size={20} /> Importar Extrato da B3 (Excel)
+                  <FileDown size={20} /> Importar Extrato da B3
                 </h3>
-                <p className="text-sm text-muted mt-1">Acesse o site da B3 → Extrato → Gere o arquivo .xlsx e arraste aqui abaixo.</p>
+                <p className="text-sm text-muted mt-1">Importe via arquivo Excel (.xlsx) exportado do portal B3, ou deixe a IA ler sua nota de corretagem (PDF).</p>
               </div>
               <button className="btn-icon" onClick={() => { setIsB3ImportOpen(false); setB3Preview(null); }}><X size={20} /></button>
             </div>
 
-            {/* Drag & Drop Zone */}
+            {/* Drag & Drop Zone - Excel */}
             {!b3Preview && (
-              <div
-                onDragOver={e => { e.preventDefault(); setB3DragOver(true); }}
-                onDragLeave={() => setB3DragOver(false)}
-                onDrop={e => {
-                  e.preventDefault();
-                  setB3DragOver(false);
-                  const file = e.dataTransfer.files[0];
-                  if (file) parseB3Excel(file);
-                }}
-                style={{
-                  border: `2px dashed ${b3DragOver ? '#3b82f6' : 'var(--border-color)'}`,
-                  borderRadius: 'var(--radius-lg)',
-                  padding: '3rem',
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                  background: b3DragOver ? 'rgba(59,130,246,0.07)' : 'transparent',
-                  transition: 'all 0.2s'
-                }}
-                onClick={() => document.getElementById('b3-file-input').click()}
-              >
-                <FileDown size={36} style={{ margin: '0 auto 0.75rem', color: '#3b82f6', opacity: 0.7 }} />
-                <p className="font-medium">Arraste o arquivo Excel aqui</p>
-                <p className="text-sm text-muted mt-1">ou clique para selecionar</p>
-                <input id="b3-file-input" type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={e => { const f = e.target.files[0]; if (f) parseB3Excel(f); }} />
+              <div>
+                <div
+                  onDragOver={e => { e.preventDefault(); setB3DragOver(true); }}
+                  onDragLeave={() => setB3DragOver(false)}
+                  onDrop={e => {
+                    e.preventDefault();
+                    setB3DragOver(false);
+                    const file = e.dataTransfer.files[0];
+                    if (file) parseB3Excel(file);
+                  }}
+                  style={{
+                    border: `2px dashed ${b3DragOver ? '#3b82f6' : 'var(--border-color)'}`,
+                    borderRadius: 'var(--radius-lg)',
+                    padding: '2rem',
+                    textAlign: 'center',
+                    cursor: 'pointer',
+                    background: b3DragOver ? 'rgba(59,130,246,0.07)' : 'transparent',
+                    transition: 'all 0.2s'
+                  }}
+                  onClick={() => document.getElementById('b3-file-input').click()}
+                >
+                  <FileDown size={36} style={{ margin: '0 auto 0.75rem', color: '#3b82f6', opacity: 0.7 }} />
+                  <p className="font-medium">Arraste o arquivo Excel (.xlsx) aqui</p>
+                  <p className="text-sm text-muted mt-1">ou clique para selecionar</p>
+                  <input id="b3-file-input" type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={e => { const f = e.target.files[0]; if (f) parseB3Excel(f); }} />
+                </div>
+
+                {/* PDF Import via AI */}
+                <div style={{ marginTop: '1rem', padding: '1rem', borderRadius: 'var(--radius-lg)', border: '1px dashed rgba(139,92,246,0.4)', background: 'rgba(139,92,246,0.03)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <div>
+                    <p className="font-medium text-sm" style={{ color: '#a78bfa' }}>🤖 Nota de Corretagem via IA</p>
+                    <p className="text-xs text-muted mt-1">Envie um PDF de nota de corretagem e a IA extrai as operações automaticamente.</p>
+                  </div>
+                  <input ref={b3PdfInputRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    if (b3PdfInputRef.current) b3PdfInputRef.current.value = '';
+                    setB3PdfImporting(true);
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                      try {
+                        const base64Data = reader.result.split(',')[1];
+                        const extracted = await extractInvestmentsFromPDF(base64Data);
+                        if (!extracted || extracted.length === 0) {
+                          showToast('Nenhuma operação de investimento encontrada no PDF.', 'error');
+                          setB3PdfImporting(false);
+                          return;
+                        }
+                        // Map to B3 preview format
+                        const rows = extracted.map(op => ({
+                          date: op.date,
+                          ticker: op.ticker?.toUpperCase(),
+                          type: op.type === 'sell' ? 'expense' : 'income',
+                          label: op.type === 'sell' ? 'Venda' : 'Compra',
+                          quantity: op.quantity,
+                          price: op.price,
+                          total: (op.quantity || 0) * (op.price || 0),
+                          title: `${op.type === 'sell' ? 'Venda' : 'Compra'} ${op.ticker?.toUpperCase()}`,
+                          category: 'Investimentos',
+                          amount: (op.quantity || 0) * (op.price || 0),
+                        }));
+                        setB3Preview({ rows });
+                        showToast(`✅ ${rows.length} operações lidas do PDF!`, 'success');
+                      } catch (err) {
+                        showToast('Erro ao ler PDF de corretagem com a IA.', 'error');
+                        console.error(err);
+                      } finally {
+                        setB3PdfImporting(false);
+                      }
+                    };
+                    reader.readAsDataURL(file);
+                  }} />
+                  <button
+                    className="btn btn-secondary"
+                    style={{ background: 'rgba(139,92,246,0.1)', borderColor: 'rgba(139,92,246,0.4)', color: '#a78bfa', fontSize: '0.8rem' }}
+                    onClick={() => b3PdfInputRef.current && b3PdfInputRef.current.click()}
+                    disabled={b3PdfImporting}
+                  >
+                    {b3PdfImporting ? <><RefreshCw size={14} className="animate-spin" /> Lendo PDF...</> : <><FileDown size={14} /> Importar PDF (IA)</>}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -3732,7 +4172,7 @@ export default function Dashboard() {
         </div>
 
         {/* Pierre Hero Cards for Totals */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2.5rem' }}>
+        <div className="wallets-hero-grid">
           {/* Faturas Card */}
           <div className="glass-panel" style={{
             padding: '3rem 2rem', borderRadius: '24px', textAlign: 'center', position: 'relative', overflow: 'hidden',
@@ -4077,7 +4517,9 @@ export default function Dashboard() {
 
   const renderCategories = () => {
     const targetMonthParts = (filterMonth || initialMonth).split('-');
-    const currentMonthLabel = new Date(targetMonthParts[0], targetMonthParts[1] - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    const currentMonthLabel = filterMode === 'month' 
+      ? new Date(targetMonthParts[0], targetMonthParts[1] - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+      : 'no período selecionado';
 
     const categoryExpenses = CATEGORIES.map(cat => {
       const expenses = filteredTransactions.filter(t => t.type === 'expense' && t.category === cat.id);
@@ -4110,26 +4552,18 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {renderInteractiveSelector()}
+
         {/* Summary Header Card */}
-        <div className="glass-panel" style={{
-          padding: '2rem 2.5rem',
-          borderRadius: '24px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '2rem',
-          position: 'relative',
-          overflow: 'hidden',
-          background: 'linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(23,25,35,0.6) 100%)'
-        }}>
+        <div className="category-summary-hero glass-panel">
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'radial-gradient(circle at 80% 50%, rgba(99,102,241,0.07) 0%, transparent 60%)', zIndex: 0 }} />
-          <div style={{ zIndex: 1 }}>
-            <p className="text-muted" style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '0.5rem' }}>Total gasto em {currentMonthLabel}</p>
-            <h2 style={{ fontSize: '2.8rem', fontWeight: 800, margin: 0, fontFamily: 'var(--font-display)', letterSpacing: '-1px' }}>
+          <div className="category-summary-info">
+            <p className="category-summary-label">Total gasto {filterMode === 'month' ? 'em ' : ''}{currentMonthLabel}</p>
+            <h2 className="category-summary-value">
               {formatCurrency(totalExpenseMonth)}
             </h2>
           </div>
-          <div style={{ width: '160px', height: '160px', zIndex: 1, position: 'relative' }}>
+          <div className="category-summary-chart-container">
             {pieData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <RechartsPieChart>
@@ -4189,7 +4623,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* Progress bar inline */}
-                    <div style={{ flex: 1, margin: '0 2rem' }}>
+                    <div className="category-progress-container">
                       <div style={{ height: '4px', background: 'rgba(255,255,255,0.06)', borderRadius: '2px', overflow: 'hidden' }}>
                         <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: '2px', transition: 'width 0.5s ease' }} />
                       </div>
@@ -4484,8 +4918,73 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-layout">
-      {/* Top Search & Actions Header (Mockup Profile Section) */}
-      <div className="top-right-actions">
+      {/* Sidebar Overlay */}
+      {isMobileSidebarOpen && (
+        <div className="sidebar-overlay" onClick={() => setIsMobileSidebarOpen(false)} style={{ display: 'block' }}></div>
+      )}
+
+      {/* Sidebar (Mobile Drawer) */}
+      <aside className={`sidebar ${isMobileSidebarOpen ? 'mobile-open' : ''}`}>
+        <div className="sidebar-header">
+          <div className="sidebar-logo">
+            <div className="sidebar-logo-icon">F</div>
+            <span>FYNC</span>
+          </div>
+          <button className="btn-icon mobile-only" onClick={() => setIsMobileSidebarOpen(false)} style={{ marginLeft: 'auto' }}>
+            <X size={20} />
+          </button>
+        </div>
+        <nav className="sidebar-nav">
+          <div className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => { setActiveTab('overview'); setIsMobileSidebarOpen(false); }}>
+            <LayoutDashboard size={18} /> Visão geral
+          </div>
+          <div className={`nav-item ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => { setActiveTab('transactions'); setIsMobileSidebarOpen(false); }}>
+            <Repeat size={18} /> Transações
+          </div>
+          <div className={`nav-item ${activeTab === 'parcelamentos' ? 'active' : ''}`} onClick={() => { setActiveTab('parcelamentos'); setIsMobileSidebarOpen(false); }}>
+            <CalendarDays size={18} /> Parcelamentos
+          </div>
+          <div className={`nav-item ${activeTab === 'subscriptions' ? 'active' : ''}`} onClick={() => { setActiveTab('subscriptions'); setIsMobileSidebarOpen(false); }}>
+            <RefreshCw size={18} /> Assinaturas
+          </div>
+          <div className={`nav-item ${activeTab === 'categories' ? 'active' : ''}`} onClick={() => { setActiveTab('categories'); setIsMobileSidebarOpen(false); }}>
+            <PieChart size={18} /> Categorias
+          </div>
+          <div className={`nav-item ${activeTab === 'wallets' ? 'active' : ''}`} onClick={() => { setActiveTab('wallets'); setIsMobileSidebarOpen(false); }}>
+            <CreditCard size={18} /> Carteiras
+          </div>
+          <div className={`nav-item ${activeTab === 'investments' ? 'active' : ''}`} onClick={() => { setActiveTab('investments'); setIsMobileSidebarOpen(false); }}>
+            <TrendingUp size={18} /> Investimentos
+          </div>
+          <div className={`nav-item ${activeTab === 'ai' ? 'active' : ''}`} onClick={() => { setActiveTab('ai'); setIsMobileSidebarOpen(false); }}>
+            <Activity size={18} /> Finn (AI)
+          </div>
+          <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => { setActiveTab('settings'); setIsMobileSidebarOpen(false); }}>
+              <Settings size={18} /> Configurações
+            </div>
+            <div className="nav-item" onClick={logout} style={{ color: '#ef4444' }}>
+              <LogOut size={18} /> Sair
+            </div>
+          </div>
+        </nav>
+      </aside>
+
+      {/* Mobile Topbar (Visible only on mobile) */}
+      <div className="mobile-topbar">
+        <button className="menu-toggle" onClick={() => setIsMobileSidebarOpen(true)}>
+          <Menu size={24} />
+        </button>
+        <div className="mobile-logo">FYNC</div>
+        <div className="profile-circle" onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}>
+          <div className="user-avatar" style={{ background: accentColor, width: '100%', height: '100%', borderRadius: '0' }}>
+            {(currentUser?.user_metadata?.name || currentUser?.email)?.charAt(0).toUpperCase()}
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop Top Actions */}
+      <div className="top-right-actions desktop-only">
         <div className="header-search" style={{ width: '240px' }}>
           <Search className="search-icon" size={16} />
           <input type="text" className="search-input" placeholder="Buscar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ padding: '0.4rem 1rem 0.4rem 2.5rem', fontSize: '0.8rem' }} />
@@ -4512,10 +5011,10 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <main className="main-content" style={{ overflowY: 'auto' }}>
+      <main className="main-content dashboard-scroll-area">
         <div className="interactive-layout-container">
           {/* Top Pill Navigation */}
-          <div className="top-tabs-nav" style={{ marginTop: '2rem' }}>
+          <div className="top-tabs-nav">
             <button className={`tab-pill ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}><LayoutDashboard size={16} /> Visão geral</button>
             <button className={`tab-pill ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}><Repeat size={16} /> Transações</button>
             <button className={`tab-pill ${activeTab === 'parcelamentos' ? 'active' : ''}`} onClick={() => setActiveTab('parcelamentos')}><CalendarDays size={16} /> Parcelamentos</button>
@@ -4535,7 +5034,7 @@ export default function Dashboard() {
               transition={{ duration: 0.3 }}
             >
               {activeTab === 'overview' ? renderInteractiveOverview() : (
-                <div style={{ padding: '0 2rem' }}>
+                <div className="tab-content-wrapper">
                   {activeTab === 'transactions' && renderTransactions()}
                   {activeTab === 'parcelamentos' && renderInstallments()}
                   {activeTab === 'reports' && renderReports()}
@@ -5399,6 +5898,329 @@ export default function Dashboard() {
         </div>
       )}
 
+
+      {/* ===== INDEX DETAIL MODAL ===== */}
+      {indexDetailModal && (
+        <div className="modal-overlay animate-fade-in" style={{ zIndex: 10500 }} onClick={() => { setIndexDetailModal(null); setIndexDetailData(null); }}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '700px', width: '94%', padding: '2rem' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+              <div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '4px' }}>{indexDetailModal.ticker}</div>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 800 }}>{indexDetailModal.label}</h2>
+                {indexDetailData?.quote && (
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginTop: '4px' }}>
+                    <span style={{ fontSize: '2rem', fontWeight: 800 }}>
+                      {indexDetailData.quote.regularMarketPrice?.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}
+                    </span>
+                    <span style={{
+                      fontSize: '1rem', fontWeight: 700,
+                      color: (indexDetailData.quote.regularMarketChangePercent || 0) >= 0 ? 'var(--success-color)' : 'var(--danger-color)'
+                    }}>
+                      {(indexDetailData.quote.regularMarketChangePercent || 0) >= 0 ? '+' : ''}
+                      {indexDetailData.quote.regularMarketChangePercent?.toFixed(2)}%
+                    </span>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      ({(indexDetailData.quote.regularMarketChange || 0) >= 0 ? '+' : ''}{indexDetailData.quote.regularMarketChange?.toFixed(2)})
+                    </span>
+                  </div>
+                )}
+              </div>
+              <button className="btn-icon" onClick={() => { setIndexDetailModal(null); setIndexDetailData(null); }}><X size={20} /></button>
+            </div>
+
+            {indexDetailLoading ? (
+              <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>Carregando dados em tempo real...</div>
+            ) : indexDetailData?.history?.length > 0 ? (
+              <div style={{ height: '260px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={indexDetailData.history}>
+                    <defs>
+                      <linearGradient id="idxGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="var(--primary-color)" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="var(--primary-color)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                    <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-muted)', fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis hide domain={['auto', 'auto']} />
+                    <RechartsTooltip
+                      contentStyle={{ background: '#0d0d18', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', fontSize: '0.8rem' }}
+                      formatter={val => [val?.toLocaleString('pt-BR', { maximumFractionDigits: 2 }), indexDetailModal.label]}
+                    />
+                    <Area type="monotone" dataKey="value" stroke="var(--primary-color)" strokeWidth={2.5} fillOpacity={1} fill="url(#idxGrad)" dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                Histórico intraday não disponível para este índice.<br/>
+                <span style={{ fontSize: '0.75rem', opacity: 0.6 }}>Alguns índices requerem token para dados históricos.</span>
+              </div>
+            )}
+
+            {indexDetailData?.quote && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginTop: '1.5rem' }}>
+                {[
+                  { label: 'Abertura', value: indexDetailData.quote.regularMarketOpen?.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) },
+                  { label: 'Máxima', value: indexDetailData.quote.regularMarketDayHigh?.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) },
+                  { label: 'Mínima', value: indexDetailData.quote.regularMarketDayLow?.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) },
+                  { label: 'Fech. Anterior', value: indexDetailData.quote.regularMarketPreviousClose?.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) },
+                  { label: 'Volume', value: indexDetailData.quote.regularMarketVolume ? (indexDetailData.quote.regularMarketVolume / 1e6).toFixed(1) + 'M' : '---' },
+                  { label: 'Atualizado', value: indexDetailData.quote.regularMarketTime ? new Date(indexDetailData.quote.regularMarketTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '---' },
+                ].map(item => (
+                  <div key={item.label} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '0.75rem 1rem' }}>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '4px', letterSpacing: '0.5px' }}>{item.label}</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{item.value || '---'}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+              <p style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.2)' }}>Dados fornecidos por brapi.dev • Atualizado em tempo real da B3</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== SIDE DRAWER: BUSCA E DETALHE DE ATIVOS ===== */}
+      {isStockSearchOpen && (
+        <div className="drawer-overlay animate-fade-in" onClick={() => { setIsStockSearchOpen(false); setSelectedStockDetail(null); setStockSearchQuery(''); }}>
+          <div className="drawer-content animate-drawer-in" onClick={e => e.stopPropagation()}>
+            <button 
+              type="button"
+              className="drawer-close" 
+              onClick={(e) => { 
+                e.preventDefault();
+                e.stopPropagation();
+                setIsStockSearchOpen(false); 
+                setSelectedStockDetail(null); 
+                setStockSearchQuery(''); 
+              }}
+            >
+              <X size={20} />
+            </button>
+
+            {!selectedStockDetail ? (
+              <div className="animate-fade-in">
+                <div style={{ marginBottom: '2.5rem' }}>
+                  <h2 style={{ fontWeight: 800, fontSize: '1.75rem', marginBottom: '0.5rem', letterSpacing: '-0.5px' }}>
+                    Explorar Mercado
+                  </h2>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Pesquise ações, FIIs ou ETFs para analisar fundamentos e performance.</p>
+                </div>
+
+                <div style={{ position: 'relative', marginBottom: '2rem' }}>
+                  <Search size={20} style={{ position: 'absolute', left: '1.25rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+                  <input
+                    type="text"
+                    className="input-field"
+                    style={{ paddingLeft: '3rem', fontSize: '1.1rem', height: '60px', borderRadius: '16px', background: 'rgba(255,255,255,0.03)' }}
+                    placeholder="Ex: PETR4, IVVB11, HGLG11..."
+                    value={stockSearchQuery}
+                    onChange={e => setStockSearchQuery(e.target.value)}
+                    autoFocus
+                  />
+                  {stockSearchLoading && (
+                    <RefreshCw size={18} className="animate-spin" style={{ position: 'absolute', right: '1.25rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--primary-color)' }} />
+                  )}
+                </div>
+
+                {/* Search Results */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {stockSearchResults.map(stock => (
+                    <div
+                      key={stock.stock}
+                      className="glass-panel"
+                      style={{ padding: '1rem 1.25rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '1rem', transition: 'all 0.2s', border: '1px solid rgba(255,255,255,0.04)' }}
+                      onClick={() => openStockDetail(stock.stock)}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.3)'; e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)'; e.currentTarget.style.background = 'rgba(255,255,255,0.01)'; }}
+                    >
+                      <img src={stock.logo} alt={stock.stock} style={{ width: 40, height: 40, borderRadius: '10px', background: '#fff', padding: '2px' }} onError={e => e.target.src = 'https://via.placeholder.com/40'} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 800, fontSize: '1rem' }}>{stock.stock}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stock.name}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 700 }}>R$ {stock.close.toFixed(2)}</div>
+                        <div style={{ fontSize: '0.75rem', color: stock.change >= 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                          {stock.change >= 0 ? '+' : ''}{stock.change.toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {!stockSearchLoading && stockSearchQuery && stockSearchResults.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+                      Nenhum ativo encontrado para "{stockSearchQuery}"
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="animate-fade-in">
+                <button
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '2rem', padding: '6px 12px', borderRadius: '8px' }}
+                  onClick={() => setSelectedStockDetail(null)}
+                >
+                  <ChevronLeft size={16} /> Voltar à pesquisa
+                </button>
+
+                {selectedStockDetailLoading ? (
+                  <div style={{ textAlign: 'center', padding: '5rem' }}>
+                    <RefreshCw size={32} className="animate-spin" style={{ color: 'var(--primary-color)', marginBottom: '1rem' }} />
+                    <div style={{ color: 'var(--text-muted)' }}>Buscando dados vitais de {selectedStockDetail.ticker}...</div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '2.5rem' }}>
+                      <div style={{ position: 'relative' }}>
+                        <img 
+                          src={selectedStockDetail.logourl} 
+                          alt={selectedStockDetail.symbol} 
+                          style={{ width: 80, height: 80, borderRadius: '22px', background: '#fff', padding: '4px', objectFit: 'contain', boxShadow: '0 10px 25px rgba(0,0,0,0.3)' }} 
+                          onError={e => { e.target.style.display = 'none'; }} 
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--primary-color)', background: 'rgba(99,102,241,0.1)', padding: '2px 8px', borderRadius: '6px' }}>
+                            {selectedStockDetail.symbol}
+                          </span>
+                        </div>
+                        <h1 style={{ fontWeight: 850, fontSize: '1.8rem', margin: 0, letterSpacing: '-0.8px' }}>
+                          {selectedStockDetail.longName || selectedStockDetail.shortName}
+                        </h1>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.5rem' }}>
+                          <span style={{ fontSize: '2.4rem', fontWeight: 800 }}>R$ {selectedStockDetail.regularMarketPrice?.toFixed(2).replace('.', ',')}</span>
+                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <span style={{ fontSize: '1rem', fontWeight: 700, color: (selectedStockDetail.regularMarketChangePercent || 0) >= 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                              {(selectedStockDetail.regularMarketChangePercent || 0) >= 0 ? '+' : ''}{selectedStockDetail.regularMarketChangePercent?.toFixed(2)}%
+                            </span>
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Hoje</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* AI ANALYSIS SECTION - Prominent */}
+                    <div style={{ marginBottom: '2.5rem' }}>
+                      {!stockAiAnalysis && !isAnalyzingStock && (
+                        <button 
+                          className="btn btn-primary w-full" 
+                          onClick={handleAiStockAnalysis}
+                          style={{ gap: '10px', height: '56px', fontSize: '1rem', borderRadius: '16px', boxShadow: '0 8px 20px rgba(99,102,241,0.2)' }}
+                        >
+                          <Sparkles size={20} /> Analisar Fundamentos com o Finn
+                        </button>
+                      )}
+                      {isAnalyzingStock && (
+                        <div style={{ textAlign: 'center', padding: '2rem', background: 'rgba(99,102,241,0.05)', borderRadius: '20px', border: '1px dashed rgba(99,102,241,0.3)' }}>
+                          <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 12px', color: 'var(--primary-color)' }} />
+                          <div style={{ fontWeight: 600, color: '#fff' }}>Finn está processando...</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>Cruzando dados de mercado e indicadores</div>
+                        </div>
+                      )}
+                      {stockAiAnalysis && (
+                        <div className="glass-panel" style={{ padding: '1.5rem', borderRadius: '20px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary-color)', fontWeight: 800, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                              <Sparkles size={16} /> Relatório do Analista Finn
+                            </div>
+                            <button className="btn-icon mini" onClick={() => setStockAiAnalysis(null)}><X size={16} /></button>
+                          </div>
+                          <div style={{ fontSize: '0.95rem', lineHeight: '1.7', color: 'rgba(255,255,255,0.95)', whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>
+                            "{stockAiAnalysis}"
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Enhanced Chart Section */}
+                    <div style={{ background: 'rgba(255,255,255,0.015)', borderRadius: '24px', padding: '1.5rem', border: '1px solid rgba(255,255,255,0.03)', marginBottom: '2.5rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Histórico Intraday</span>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--success-color)', background: 'rgba(16,185,129,0.1)', padding: '2px 8px', borderRadius: '4px' }}>Tempo Real</span>
+                        </div>
+                      </div>
+                      
+                      <div style={{ height: '240px' }}>
+                        {selectedStockDetail.history?.length > 0 ? (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={selectedStockDetail.history}>
+                              <defs>
+                                <linearGradient id="stockGradBig" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor={selectedStockDetail.regularMarketChangePercent >= 0 ? '#10b981' : '#ef4444'} stopOpacity={0.3} />
+                                  <stop offset="95%" stopColor={selectedStockDetail.regularMarketChangePercent >= 0 ? '#10b981' : '#ef4444'} stopOpacity={0} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                              <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-muted)', fontSize: 10 }} interval="preserveStartEnd" />
+                              <YAxis hide domain={['auto', 'auto']} />
+                              <RechartsTooltip
+                                contentStyle={{ background: '#0d0d18', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', boxShadow: '0 10px 20px rgba(0,0,0,0.5)' }}
+                                formatter={val => [`R$ ${val?.toFixed(2).replace('.', ',')}`, 'Preço']}
+                              />
+                              <Area type="monotone" dataKey="value" stroke={selectedStockDetail.regularMarketChangePercent >= 0 ? '#10b981' : '#ef4444'} strokeWidth={3} fillOpacity={1} fill="url(#stockGradBig)" dot={false} />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          <div className="flex items-center justify-center h-full text-muted">Dados do gráfico indisponíveis</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Key Indicators Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2.5rem' }}>
+                      {[
+                        { label: 'P/L', value: selectedStockDetail.priceEarnings?.toFixed(2) || '---', highlight: true },
+                        { label: 'P/VP', value: selectedStockDetail.priceToBook?.toFixed(2) || '---', highlight: true },
+                        { label: 'DY (12m)', value: selectedStockDetail.dividendYield ? (selectedStockDetail.dividendYield * 100).toFixed(2) + '%' : '---', highlight: true },
+                        { label: 'Abertura', value: `R$ ${selectedStockDetail.regularMarketOpen?.toFixed(2).replace('.', ',')}` },
+                        { label: 'Máxima', value: `R$ ${selectedStockDetail.regularMarketDayHigh?.toFixed(2).replace('.', ',')}` },
+                        { label: 'Mínima', value: `R$ ${selectedStockDetail.regularMarketDayLow?.toFixed(2).replace('.', ',')}` },
+                        { label: 'Vol. Médio', value: selectedStockDetail.averageDailyVolume10Day ? (selectedStockDetail.averageDailyVolume10Day / 1e6).toFixed(1) + 'M' : '---' },
+                        { label: 'Market Cap', value: selectedStockDetail.marketCap ? 'R$ ' + (selectedStockDetail.marketCap / 1e9).toFixed(1) + 'B' : '---' },
+                        { label: '52 Semanas', value: `R$ ${selectedStockDetail.fiftyTwoWeekLow?.toFixed(0)} - ${selectedStockDetail.fiftyTwoWeekHigh?.toFixed(0)}` },
+                      ].map(item => (
+                        <div key={item.label} style={{ background: item.highlight ? 'rgba(255,255,255,0.03)' : 'transparent', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '14px', padding: '1rem' }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{item.label}</div>
+                          <div style={{ fontWeight: 800, fontSize: '1rem', color: item.highlight ? 'var(--primary-color)' : '#fff' }}>{item.value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '1rem' }}>
+                      <button
+                        className="btn btn-primary"
+                        style={{ flex: 2, height: '54px', borderRadius: '14px' }}
+                        onClick={() => { openNewTransaction('expense', 'Investimentos'); setIsStockSearchOpen(false); }}
+                      >
+                        <Plus size={18} /> Registrar Aporte
+                      </button>
+                      <button
+                        className="btn btn-secondary"
+                        style={{ flex: 1, height: '54px', borderRadius: '14px' }}
+                        onClick={() => window.open(`https://statusinvest.com.br/acoes/${selectedStockDetail.symbol.toLowerCase()}`, '_blank')}
+                      >
+                        Ver no StatusInvest
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ marginTop: '3rem', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '1.5rem' }}>
+              <p style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.2)', maxWidth: '80%', margin: '0 auto' }}>
+                Os dados financeiros são fornecidos pela brapi.dev e APIs de mercado. A Fync não se responsabiliza por decisões de investimento baseadas nestas informações.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating Finn AI Assistant */}
       <div className="floating-ai-wrapper">
         <AnimatePresence>
@@ -5437,6 +6259,42 @@ export default function Dashboard() {
           </div>
         </motion.button>
       </div>
+
+      {/* News Filter Modal */}
+      {isNewsModalOpen && (
+        <div className="modal-overlay" style={{ zIndex: 11000 }}>
+          <div className="modal-content animate-slide-up" style={{ maxWidth: '400px' }}>
+            <div className="modal-header">
+              <h2 className="modal-title">Filtrar Notícias</h2>
+              <button className="btn-icon" onClick={() => setIsNewsModalOpen(false)}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <p className="text-muted text-sm mb-4">Veja as notícias publicadas em um dia específico (últimos 7 dias).</p>
+              <div className="input-group">
+                <label className="input-label">Selecionar Data</label>
+                <input 
+                  type="date" 
+                  className="input-field" 
+                  value={newsFilterDate}
+                  onChange={(e) => setNewsFilterDate(e.target.value)}
+                  max={new Date().toISOString().split('T')[0]}
+                  min={new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+                />
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '0.75rem' }}>
+              <button className="btn btn-secondary flex-1" onClick={() => { setNewsFilterDate(''); setIsNewsModalOpen(false); }}>
+                Limpar Filtro
+              </button>
+              <button className="btn btn-primary flex-1" onClick={() => setIsNewsModalOpen(false)}>
+                Ver Resultados
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renderRangePicker()}
     </div>
   );
 }
