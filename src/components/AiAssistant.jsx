@@ -9,7 +9,7 @@ const QUICK_QUESTIONS = [
   { emoji: '💡', text: 'Me dê dicas para economizar' },
 ];
 
-export default function AiAssistant({ financialContext, compactMode = false }) {
+export default function AiAssistant({ financialContext, compactMode = false, onExecuteCommand }) {
   const STORAGE_KEY = 'fync_finn_chat_history';
 
   const [messages, setMessages] = useState(() => {
@@ -52,14 +52,67 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
       .filter(m => m.id !== 1)
       .map(m => ({ role: m.role, text: m.text }));
 
+  const detectCommand = (text) => {
+    const t = text.toLowerCase();
+    
+    // Command patterns
+    const patterns = [
+      {
+        type: 'categorize',
+        regex: /(?:categorize|coloque|ajuste|mude)\s+(?:todas\s+as\s+)?transações\s+(?:com\s+o\s+nome\s+)?["']?(.*?)["']?\s+(?:como|na\s+categoria)\s+["']?(.*?)["']?/i
+      },
+      {
+        type: 'categorize_simple',
+        regex: /(?:categorize|coloque)\s+["']?(.*?)["']?\s+em\s+["']?(.*?)["']?/i
+      },
+      {
+        type: 'delete',
+        regex: /(?:apague|delete|exclua|remova)\s+(?:todas\s+as\s+)?transações\s+(?:com\s+o\s+nome\s+)?["']?(.*?)["']?/i
+      },
+      {
+        type: 'hide',
+        regex: /(?:oculte|esconda)\s+(?:todas\s+as\s+)?transações\s+(?:com\s+o\s+nome\s+)?["']?(.*?)["']?/i
+      }
+    ];
+
+    for (const p of patterns) {
+      const match = t.match(p.regex);
+      if (match) {
+        if (p.type === 'categorize' || p.type === 'categorize_simple') {
+          return { type: 'categorize', filter: match[1].trim(), value: match[2].trim() };
+        }
+        if (p.type === 'delete') {
+          return { type: 'delete', filter: match[1].trim() };
+        }
+        if (p.type === 'hide') {
+          return { type: 'hide', filter: match[1].trim() };
+        }
+      }
+    }
+    return null;
+  };
+
   const sendMessage = async (text) => {
     if (!text.trim() || isLoading) return;
 
     const userMsg = { id: Date.now(), role: 'user', text: text.trim(), timestamp: new Date() };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
-    setIsLoading(true);
 
+    // Check for command
+    const command = detectCommand(text);
+    if (command) {
+      setMessages(prev => [...prev, {
+        id: Date.now() + 1,
+        role: 'assistant',
+        text: `Entendido! Você quer executar uma ação em lote.`,
+        command,
+        timestamp: new Date()
+      }]);
+      return;
+    }
+
+    setIsLoading(true);
     try {
       const history = getHistory();
       const response = await askGemini(text.trim(), financialContext, history);
@@ -220,37 +273,86 @@ export default function AiAssistant({ financialContext, compactMode = false }) {
                   )}
 
                   {/* Bubble */}
-                  <div style={{ 
-                    maxWidth: '85%', 
-                    minWidth: 0,
-                    width: 'fit-content',
-                    padding: '0.75rem 1rem',
-                    borderRadius: msg.role === 'user' 
-                      ? '16px 16px 4px 16px' 
-                      : '16px 16px 16px 4px',
-                    background: msg.role === 'user'
-                      ? 'linear-gradient(135deg, #6366f1, #818cf8)' // User bubble matches mockup
-                      : msg.isError 
-                        ? 'rgba(239,68,68,0.1)' 
-                        : 'rgba(255,255,255,0.06)', // Finn bubble matches mockup
-                    border: msg.role === 'user'
-                      ? 'none'
-                      : msg.isError 
-                        ? '1px solid rgba(239,68,68,0.2)' 
-                        : '1px solid rgba(255,255,255,0.08)',
-                    color: msg.role === 'user' ? 'white' : 'rgba(255,255,255,0.85)',
-                    fontSize: '0.9rem',
-                    lineHeight: '1.6',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    overflowWrap: 'break-word',
-                    boxShadow: msg.role === 'user' ? '0 4px 12px rgba(99,102,241,0.2)' : 'none',
-                  }}
-                    dangerouslySetInnerHTML={{ __html: formatText(msg.text) }}
-                  />
-                </div>
-               )
-            })}
+                    <div style={{ 
+                      maxWidth: '85%', 
+                      minWidth: 0,
+                      width: 'fit-content',
+                      padding: '0.75rem 1rem',
+                      borderRadius: msg.role === 'user' 
+                        ? '16px 16px 4px 16px' 
+                        : '16px 16px 16px 4px',
+                      background: msg.role === 'user'
+                        ? 'linear-gradient(135deg, #6366f1, #818cf8)' // User bubble matches mockup
+                        : msg.isError 
+                          ? 'rgba(239,68,68,0.1)' 
+                          : 'rgba(255,255,255,0.06)', // Finn bubble matches mockup
+                      border: msg.role === 'user'
+                        ? 'none'
+                        : msg.isError 
+                          ? '1px solid rgba(239,68,68,0.2)' 
+                          : '1px solid rgba(255,255,255,0.08)',
+                      color: msg.role === 'user' ? 'white' : 'rgba(255,255,255,0.85)',
+                      fontSize: '0.9rem',
+                      lineHeight: '1.6',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      overflowWrap: 'break-word',
+                      boxShadow: msg.role === 'user' ? '0 4px 12px rgba(99,102,241,0.2)' : 'none',
+                    }}>
+                      <div dangerouslySetInnerHTML={{ __html: formatText(msg.text) }} />
+                      
+                      {msg.command && (
+                        <div style={{ 
+                          marginTop: '1rem', 
+                          padding: '1rem', 
+                          background: 'rgba(255,255,255,0.03)', 
+                          borderRadius: '12px',
+                          border: '1px solid rgba(255,255,255,0.05)'
+                        }}>
+                          <p style={{ margin: '0 0 0.75rem 0', fontWeight: 600, color: '#fff' }}>
+                            {msg.command.type === 'categorize' && `Confirmar categorização de "${msg.command.filter}" como "${msg.command.value}"?`}
+                            {msg.command.type === 'delete' && `Confirmar exclusão de todas as transações com "${msg.command.filter}"?`}
+                            {msg.command.type === 'hide' && `Confirmar ocultação de todas as transações com "${msg.command.filter}"?`}
+                          </p>
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button 
+                              className="btn btn-primary" 
+                              style={{ padding: '0.4rem 1rem', fontSize: '0.8rem' }}
+                              onClick={() => {
+                                onExecuteCommand?.(msg.command);
+                                setMessages(prev => prev.filter(m => m.id !== msg.id));
+                                setMessages(prev => [...prev, {
+                                  id: Date.now(),
+                                  role: 'assistant',
+                                  text: `Comando executado com sucesso! ✅`,
+                                  timestamp: new Date()
+                                }]);
+                              }}
+                            >
+                              Confirmar
+                            </button>
+                            <button 
+                              className="btn btn-secondary" 
+                              style={{ padding: '0.4rem 1rem', fontSize: '0.8rem' }}
+                              onClick={() => {
+                                setMessages(prev => prev.filter(m => m.id !== msg.id));
+                                setMessages(prev => [...prev, {
+                                  id: Date.now(),
+                                  role: 'assistant',
+                                  text: `Operação cancelada. Como posso ajudar agora?`,
+                                  timestamp: new Date()
+                                }]);
+                              }}
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+             })}
 
             {/* Typing Indicator */}
             {isLoading && (

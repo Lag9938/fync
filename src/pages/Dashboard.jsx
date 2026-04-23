@@ -69,11 +69,11 @@ import autoTable from 'jspdf-autotable';
 import { parseOFX } from '../utils/ofxParser';
 import { predictCategory } from '../utils/smartCategory';
 import AiAssistant from '../components/AiAssistant';
-import { askGemini, batchCategorizeTransactions, extractTransactionsFromPDF, extractInvestmentsFromPDF } from '../utils/gemini';
+import { askGemini, batchCategorizeTransactions, extractTransactionsFromPDF, extractInvestmentsFromPDF, resolveMerchantDomains } from '../utils/gemini';
 import { motion, AnimatePresence } from 'framer-motion';
 import './Dashboard.css';
 
-const APP_VERSION = '1.8.2';
+const APP_VERSION = '1.8.3';
 
 const CATEGORIES = [
   { id: 'Alimentação', icon: Utensils },
@@ -106,6 +106,7 @@ const STORE_ICONS = {
   'uber': { icon: Car, color: '#000000', domain: 'uber.com' },
   'ifood': { icon: Utensils, color: '#ea1d2c', domain: 'ifood.com.br' },
   'mercado livre': { icon: ShoppingBag, color: '#fff159', domain: 'mercadolivre.com.br' },
+  'mercadopago': { icon: CreditCard, color: '#009ee3', domain: 'mercadopago.com.br' },
   'google': { icon: Globe2, color: '#4285f4', domain: 'google.com' },
   'apple': { icon: CreditCard, color: '#000000', domain: 'apple.com' },
   'sony': { icon: Gamepad2, color: '#000000', domain: 'playstation.com' },
@@ -114,13 +115,53 @@ const STORE_ICONS = {
   'airbnb': { icon: Home, color: '#ff5a5f', domain: 'airbnb.com' },
   'disney': { icon: Play, color: '#113ccf', domain: 'disneyplus.com' },
   'youtube': { icon: Play, color: '#ff0000', domain: 'youtube.com' },
+  'clickbus': { icon: Car, color: '#ff5800', domain: 'clickbus.com.br' },
+  'click bus': { icon: Car, color: '#ff5800', domain: 'clickbus.com.br' },
+  'rappi': { icon: Utensils, color: '#ff441f', domain: 'rappi.com.br' },
+  'shopee': { icon: ShoppingBag, color: '#ee4d2d', domain: 'shopee.com.br' },
+  'magalu': { icon: ShoppingBag, color: '#0056a0', domain: 'magazineluiza.com.br' },
+  'magazine luiza': { icon: ShoppingBag, color: '#0056a0', domain: 'magazineluiza.com.br' },
+  'americanas': { icon: ShoppingBag, color: '#ef3837', domain: 'americanas.com.br' },
+  'casas bahia': { icon: ShoppingBag, color: '#00a2e0', domain: 'casasbahia.com.br' },
+  'natura': { icon: Coffee, color: '#ff6b35', domain: 'natura.com.br' },
+  'havaianas': { icon: ShoppingBag, color: '#0057a8', domain: 'havaianas.com.br' },
+  '99': { icon: Car, color: '#ffcc00', domain: '99app.com' },
+  'ninety nine': { icon: Car, color: '#ffcc00', domain: '99app.com' },
+  'linkedin': { icon: Briefcase, color: '#0a66c2', domain: 'linkedin.com' },
+  'microsoft': { icon: Globe2, color: '#00a4ef', domain: 'microsoft.com' },
+  'openai': { icon: Globe2, color: '#000000', domain: 'openai.com' },
+  'chatgpt': { icon: Globe2, color: '#000000', domain: 'openai.com' },
+  'notion': { icon: Briefcase, color: '#000000', domain: 'notion.so' },
+  'figma': { icon: Briefcase, color: '#f24e1e', domain: 'figma.com' },
+  'inter': { icon: CreditCard, color: '#ff7a00', domain: 'bancointer.com.br' },
+  'banco inter': { icon: CreditCard, color: '#ff7a00', domain: 'bancointer.com.br' },
+  'bradesco': { icon: CreditCard, color: '#cc092f', domain: 'bradesco.com.br' },
+  'itau': { icon: CreditCard, color: '#003087', domain: 'itau.com.br' },
+  'itaú': { icon: CreditCard, color: '#003087', domain: 'itau.com.br' },
+  'santander': { icon: CreditCard, color: '#ec0000', domain: 'santander.com.br' },
+  'caixa': { icon: CreditCard, color: '#005ca9', domain: 'caixa.gov.br' },
+  'c6 bank': { icon: CreditCard, color: '#242424', domain: 'c6bank.com.br' },
+  'c6bank': { icon: CreditCard, color: '#242424', domain: 'c6bank.com.br' },
+  'picpay': { icon: CreditCard, color: '#21c25e', domain: 'picpay.com' },
+  'paypal': { icon: CreditCard, color: '#003087', domain: 'paypal.com' },
+  'twitch': { icon: Play, color: '#9146ff', domain: 'twitch.tv' },
+  'hbo': { icon: Play, color: '#7248bd', domain: 'hbomax.com' },
+  'max': { icon: Play, color: '#7248bd', domain: 'max.com' },
+  'globoplay': { icon: Play, color: '#f4003c', domain: 'globoplay.globo.com' },
+  'tim': { icon: CreditCard, color: '#00aeef', domain: 'tim.com.br' },
+  'claro': { icon: CreditCard, color: '#da291c', domain: 'claro.com.br' },
+  'vivo': { icon: CreditCard, color: '#660099', domain: 'vivo.com.br' },
 };
 
-const getStoreIcon = (title) => {
+const getStoreIcon = (title, domainCache = {}) => {
   const t = title.toLowerCase();
   for (const [key, data] of Object.entries(STORE_ICONS)) {
     if (t.includes(key)) return { ...data, isBrand: true };
   }
+  // Check AI-resolved domain cache
+  const firstName = t.split(/[-\/\s]/)[0]?.trim();
+  const cachedDomain = domainCache[firstName] || domainCache[t.split(/[-\/]/)[0]?.trim()?.toLowerCase()];
+  if (cachedDomain) return { icon: ShoppingBag, color: 'var(--primary-color)', domain: cachedDomain, isBrand: true };
   return { icon: ShoppingBag, color: 'var(--primary-color)', isBrand: false };
 };
 
@@ -591,6 +632,37 @@ export default function Dashboard() {
   useEffect(() => {
     setTxShowCount(15);
   }, [txType, txCategory, txWallet, txSearch, txSort, filterMode, filterMonth, filterStartDate, filterEndDate, filterCategory]);
+
+  // Merchant logo domain cache (persisted in localStorage)
+  const [merchantDomainCache, setMerchantDomainCache] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('fync_merchant_domains') || '{}'); } catch { return {}; }
+  });
+
+  // Auto-resolve unknown merchant domains via AI (runs when transactions load/change)
+  useEffect(() => {
+    if (!transactions || transactions.length === 0) return;
+    const knownKeys = Object.keys(STORE_ICONS);
+    // Collect unique titles that are NOT already in STORE_ICONS or in our cache
+    const unknownNames = [...new Set(
+      transactions
+        .map(t => t.title?.split(/[-\/]/)[0]?.trim()) // Take first segment before dash/slash
+        .filter(name => name && name.length > 2)
+        .filter(name => !knownKeys.some(k => name.toLowerCase().includes(k)))
+        .filter(name => !merchantDomainCache[name.toLowerCase()])
+    )].slice(0, 20); // Limit to 20 per run to avoid excessive AI calls
+
+    if (unknownNames.length === 0) return;
+
+    resolveMerchantDomains(unknownNames).then(resolved => {
+      if (!resolved || Object.keys(resolved).length === 0) return;
+      const newCache = { ...merchantDomainCache };
+      for (const [name, domain] of Object.entries(resolved)) {
+        if (domain) newCache[name.toLowerCase()] = domain;
+      }
+      setMerchantDomainCache(newCache);
+      localStorage.setItem('fync_merchant_domains', JSON.stringify(newCache));
+    }).catch(() => {});
+  }, [transactions.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply Theme globally
   useEffect(() => {
@@ -1866,6 +1938,38 @@ export default function Dashboard() {
     );
   };
 
+  const handleAiCommand = async (command) => {
+    const { type, filter, value } = command;
+    const filterLower = filter.toLowerCase();
+    const targets = transactions.filter(t => t.title.toLowerCase().includes(filterLower));
+    
+    if (targets.length === 0) {
+      showToast(`Nenhuma transação encontrada com "${filter}".`, 'info');
+      return;
+    }
+
+    const ids = targets.map(t => t.id);
+
+    try {
+      if (type === 'categorize') {
+        const cat = CATEGORIES.find(c => c.id.toLowerCase() === value.toLowerCase() || (c.label && c.label.toLowerCase() === value.toLowerCase()));
+        const catId = cat ? cat.id : 'Outros';
+        const res = await bulkUpdateCategory(ids, catId);
+        if (res.success) showToast(`✅ ${ids.length} transações atualizadas para "${catId}".`);
+      } else if (type === 'delete') {
+        const res = await deleteTransactions(ids);
+        if (res.success) showToast(`✅ ${ids.length} transações excluídas.`);
+      } else if (type === 'hide') {
+        showToast(`Ocultando ${ids.length} transações...`, 'info');
+        // If there's no 'hidden' field, we could move to a "Hidden" category if it exists
+        const res = await bulkUpdateCategory(ids, 'Outros'); 
+        if (res.success) showToast(`✅ Transações movidas para "Outros".`);
+      }
+    } catch (err) {
+      showToast(`Erro ao executar comando da IA.`, 'error');
+    }
+  };
+
 
   const handleAutoRefineCategories = async () => {
     const outros = transactions.filter(t => t.category === 'Outros');
@@ -2292,7 +2396,7 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {filteredTransactions.slice(0, txShowCount).map(t => {
-                const { icon: StoreIcon, color: iconColor, domain, isBrand } = getStoreIcon(t.title);
+                const { icon: StoreIcon, color: iconColor, domain, isBrand } = getStoreIcon(t.title, merchantDomainCache);
                 const wallet = wallets.find(w => w.id === t.walletId);
 
                 return (
@@ -2367,21 +2471,26 @@ export default function Dashboard() {
                     </td>
                     <td>
                       <div className="tx-account-badge">
-                        <div className={`tx-account-icon ${getStoreIcon(wallet?.name || '').isBrand ? 'brand-transparent' : ''}`} style={{ color: getStoreIcon(wallet?.name || '').color }}>
-                          {getStoreIcon(wallet?.name || '').isBrand ? (
-                            <img
-                              src={`https://logo.clearbit.com/${getStoreIcon(wallet?.name || '').domain}?size=64`}
-                              alt={wallet?.name}
-                              className="wallet-bank-logo"
-                              onError={(e) => {
-                                e.target.onerror = null;
-                                e.target.src = `https://www.google.com/s2/favicons?sz=64&domain=${getStoreIcon(wallet?.name || '').domain}`;
-                              }}
-                            />
-                          ) : (
-                            wallet?.type === 'checking' ? <Wallet size={14} /> : <CreditCard size={14} />
-                          )}
-                        </div>
+                        {(() => {
+                          const wIcon = getStoreIcon(wallet?.name || '', merchantDomainCache);
+                          return (
+                            <div className={`tx-account-icon ${wIcon.isBrand ? 'brand-transparent' : ''}`} style={{ color: wIcon.color }}>
+                              {wIcon.isBrand ? (
+                                <img
+                                  src={`https://logo.clearbit.com/${wIcon.domain}?size=64`}
+                                  alt={wallet?.name}
+                                  className="wallet-bank-logo"
+                                  onError={(e) => {
+                                    e.target.onerror = null;
+                                    e.target.src = `https://www.google.com/s2/favicons?sz=64&domain=${wIcon.domain}`;
+                                  }}
+                                />
+                              ) : (
+                                wallet?.type === 'checking' ? <Wallet size={14} /> : <CreditCard size={14} />
+                              )}
+                            </div>
+                          );
+                        })()}
                         <span style={{ fontWeight: 500 }}>{wallet?.name || 'N/A'}</span>
                       </div>
                     </td>
@@ -2885,7 +2994,7 @@ export default function Dashboard() {
         {/* Redesigned Installment List */}
         <div className="fync-installment-grid">
           {visibleGroups.map(group => {
-            const { icon: StoreIcon, color: iconColor, domain, isBrand } = getStoreIcon(group.title);
+            const { icon: StoreIcon, color: iconColor, domain, isBrand } = getStoreIcon(group.title, merchantDomainCache);
             const isExpanded = expandedInstallmentId === group.id;
 
             return (
@@ -4233,7 +4342,7 @@ export default function Dashboard() {
         <div className="stats-grid mb-8">
           {wallets.map(w => {
             const isNegativeAlert = w.dynamicBalance < 0 && w.type === 'checking';
-            const { domain, isBrand, icon: FallbackIcon, color: iconColor } = getStoreIcon(w.name);
+            const { domain, isBrand, icon: FallbackIcon, color: iconColor } = getStoreIcon(w.name, merchantDomainCache);
             const isExpanded = expandedWallet === w.id;
             const wTxs = transactions.filter(t => t.walletId === w.id);
             const wTxsSorted = [...wTxs].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 50);
@@ -4439,7 +4548,7 @@ export default function Dashboard() {
             </div>
           ) : (
             filteredSubs.map(sub => {
-              const { domain, isBrand, icon: FallbackIcon, color: iconColor } = getStoreIcon(sub.name);
+              const { domain, isBrand, icon: FallbackIcon, color: iconColor } = getStoreIcon(sub.name, merchantDomainCache);
 
               return (
                 <div key={sub.id} className={`fync-installment-card glass-panel ${!sub.isActive ? 'inactive-sub' : ''}`} style={{ opacity: sub.isActive ? 1 : 0.7 }}>
@@ -4648,7 +4757,7 @@ export default function Dashboard() {
                         <div style={{ padding: '1rem 2rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Nenhuma transação nesta categoria no período.</div>
                       ) : (
                         catTxsSorted.map((tx, tIdx) => {
-                          const { icon: TxIcon, color: txIconColor, domain: txDomain, isBrand: txIsBrand } = getStoreIcon(tx.title);
+                          const { icon: TxIcon, color: txIconColor, domain: txDomain, isBrand: txIsBrand } = getStoreIcon(tx.title, merchantDomainCache);
                           const txWallet = wallets.find(w => w.id === tx.walletId);
                           const txDate = tx.date ? new Date(tx.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '';
                           return (
@@ -5043,7 +5152,7 @@ export default function Dashboard() {
                   {activeTab === 'categories' && renderCategories()}
                   {activeTab === 'wallets' && renderWallets()}
                   {activeTab === 'settings' && renderSettings()}
-                  {activeTab === 'ai' && <AiAssistant financialContext={aiFinancialContext} />}
+                  {activeTab === 'ai' && <AiAssistant financialContext={aiFinancialContext} onExecuteCommand={handleAiCommand} />}
                 </div>
               )}
             </motion.div>
@@ -6241,7 +6350,7 @@ export default function Dashboard() {
                 </button>
               </div>
               <div className="floating-ai-content">
-                <AiAssistant financialContext={aiFinancialContext} compactMode={true} />
+                <AiAssistant financialContext={aiFinancialContext} compactMode={true} onExecuteCommand={handleAiCommand} />
               </div>
             </motion.div>
           )}

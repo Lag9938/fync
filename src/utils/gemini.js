@@ -142,6 +142,54 @@ Retorno esperado (exemplo):
   }
 }
 
+/**
+ * Dado uma lista de nomes de comerciantes, retorna um mapa { nome -> domínio }.
+ * Usa o Gemini para inferir o domínio do site de cada empresa.
+ * @param {string[]} merchantNames
+ */
+export async function resolveMerchantDomains(merchantNames) {
+  if (!merchantNames || merchantNames.length === 0) return {};
+
+  const prompt = `Você é um especialista em marcas e empresas brasileiras.
+Para cada nome de empresa/comerciante abaixo, retorne o domínio do site oficial (ex: "nubank.com.br", "uber.com").
+
+REGRAS:
+1. Retorne APENAS um JSON válido, sem markdown. O JSON deve ser um objeto onde a chave é o nome exato da entrada e o valor é o domínio (apenas o domínio, sem "https://" ou caminhos).
+2. Se não souber com certeza, retorne null para aquele item.
+3. Prefira domínios .com.br para empresas brasileiras.
+
+LISTA:
+${merchantNames.map((n, i) => `${i}: "${n}"`).join('\n')}
+
+Exemplo de retorno esperado:
+{
+  "Uber": "uber.com",
+  "ClickBus": "clickbus.com.br"
+}`;
+
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.1, response_mime_type: 'application/json' }
+  };
+
+  try {
+    const response = await fetch(GEMINI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) throw new Error('Falha na resolução de domínios');
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return {};
+    const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error('Erro ao resolver domínios de comerciantes:', err);
+    return {};
+  }
+}
+
 const GEMINI_FLASH_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 /**

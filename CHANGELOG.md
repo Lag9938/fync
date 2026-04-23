@@ -3,6 +3,13 @@
 
 Todas as mudanças notable neste projeto serão documentadas neste arquivo.
 
+## [1.8.3-STABLE] - 2026-04-23
+### Added
+- **Smart Logo Enrichment (IA)**: O sistema agora tenta resolver automaticamente o ícone de qualquer estabelecimento desconhecido. Se um comerciante não estiver na base de dados, a IA infere o domínio do site oficial e busca o logo via Clearbit/Google Favicons.
+- **Finn Command Execution**: O chatbot Finn agora é capaz de executar comandos de ação. Você pode digitar "categorize todas as transações clickbus como transporte" e o Finn oferecerá um card de confirmação para realizar a tarefa em massa.
+- **Expansão de Marcas**: Adicionadas mais de 40 novas marcas brasileiras e internacionais à base de ícones nativos (ClickBus, Rappi, Shopee, Bancos, Streaming, etc).
+
+
 ## [1.8.2-STABLE] - 2026-04-23
 ### Added
 - **Importação de Extrato PDF via IA (Transações)**: O botão "Importar PDF" na aba de Transações agora utiliza o Gemini 1.5 Flash para ler automaticamente qualquer extrato bancário em PDF e importar as transações para o dashboard.
