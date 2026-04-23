@@ -3444,7 +3444,10 @@ export default function Dashboard() {
             </div>
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button className="btn btn-secondary" onClick={() => setIsRangePickerOpen(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={() => setIsRangePickerOpen(false)} style={{ background: 'var(--success-color)' }}>Aplicar</button>
+              <button className="btn btn-primary" onClick={() => {
+                setFilterMode('period');
+                setIsRangePickerOpen(false);
+              }} style={{ background: 'var(--success-color)' }}>Aplicar</button>
             </div>
           </div>
         </div>

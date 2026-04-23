@@ -9,6 +9,9 @@ Todas as mudanças notable neste projeto serão documentadas neste arquivo.
 - **Finn Command Execution**: O chatbot Finn agora é capaz de executar comandos de ação. Você pode digitar "categorize todas as transações clickbus como transporte" e o Finn oferecerá um card de confirmação para realizar a tarefa em massa.
 - **Expansão de Marcas**: Adicionadas mais de 40 novas marcas brasileiras e internacionais à base de ícones nativos (ClickBus, Rappi, Shopee, Bancos, Streaming, etc).
 
+### Fixed
+- **Filtro de Período**: Corrigido erro onde o filtro não era aplicado ao selecionar datas manualmente no calendário do seletor de períodos.
+
 
 ## [1.8.2-STABLE] - 2026-04-23
 ### Added
