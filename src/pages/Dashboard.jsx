@@ -1807,8 +1807,15 @@ export default function Dashboard() {
           dateStr = d.toISOString().split('T')[0];
         } else {
           const parts = String(rawDate).split('/');
-          if (parts.length === 3) dateStr = `${parts[2].length === 2 ? '20' + parts[2] : parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-          else dateStr = new Date().toISOString().split('T')[0];
+          if (parts.length === 3) {
+            dateStr = `${parts[2].length === 2 ? '20' + parts[2] : parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+          } else if (parts.length === 2) {
+            // Tenta usar o ano do filtro atual ou o ano vigente
+            const year = filterMonth ? filterMonth.split('-')[0] : new Date().getFullYear();
+            dateStr = `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+          } else {
+            dateStr = new Date().toISOString().split('T')[0];
+          }
         }
         const amount = Math.abs(parseFloat(String(row[2]).replace(',', '.')) || 0);
         const type = parseFloat(String(row[2]).replace(',', '.')) >= 0 ? 'income' : 'expense';
@@ -1843,8 +1850,10 @@ export default function Dashboard() {
 
       for (const tx of items) {
         const isDuplicate = transactions.some(existing => {
-          const d1 = new Date(existing.date).toISOString().split('T')[0];
-          const d2 = new Date(tx.date).toISOString().split('T')[0];
+          // Comparação direta de strings de data YYYY-MM-DD para evitar problemas de fuso horário
+          const d1 = existing.date ? String(existing.date).split('T')[0] : '';
+          const d2 = tx.date ? String(tx.date).split('T')[0] : '';
+          
           return existing.walletId === wId &&
             existing.type === tx.type &&
             existing.title.trim().toLowerCase() === tx.title.trim().toLowerCase() &&
