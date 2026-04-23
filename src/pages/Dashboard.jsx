@@ -1845,7 +1845,9 @@ export default function Dashboard() {
         const isDuplicate = transactions.some(existing => {
           const d1 = new Date(existing.date).toISOString().split('T')[0];
           const d2 = new Date(tx.date).toISOString().split('T')[0];
-          return existing.title.trim().toLowerCase() === tx.title.trim().toLowerCase() &&
+          return existing.walletId === wId &&
+            existing.type === tx.type &&
+            existing.title.trim().toLowerCase() === tx.title.trim().toLowerCase() &&
             Math.abs(parseFloat(existing.amount) - parseFloat(tx.amount)) < 0.01 &&
             d1 === d2;
         });

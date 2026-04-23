@@ -11,6 +11,7 @@ Todas as mudanças notable neste projeto serão documentadas neste arquivo.
 
 ### Fixed
 - **Filtro de Período**: Corrigido erro onde o filtro não era aplicado ao selecionar datas manualmente no calendário do seletor de períodos.
+- **Deduplicação de Importação**: A lógica de detecção de duplicatas agora é específica por conta (carteira) e por tipo (receita/despesa), evitando que transações legítimas sejam ignoradas incorretamente.
 
 
 ## [1.8.2-STABLE] - 2026-04-23
