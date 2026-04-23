@@ -1,4 +1,4 @@
-/* ══════════════════════════════════════════
+﻿/* ══════════════════════════════════════════
    DASHBOARD LAYOUT (Pierre Premium Style)
 ══════════════════════════════════════════ */
 .dashboard-layout {
@@ -2587,5 +2587,6 @@
 
 @media (max-width: 1024px) {
   .ai-layout-container { flex-direction: column !important; overflow-y: auto !important; height: auto !important; }
-  .ai-suggestions-sidebar { width: 100% !important; } /* Sugest�es primeiro no mobile para ser r�pido */
+  .ai-suggestions-sidebar { width: 100% !important; } /* Sugest�es primeiro no mobile para ser r�pido */
 }
+
