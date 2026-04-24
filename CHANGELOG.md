@@ -3,6 +3,11 @@
 
 Todas as mudanças notable neste projeto serão documentadas neste arquivo.
 
+## [1.8.7-STABLE] - 2026-04-24
+### Fixed
+- **OFX Timezone Hotfix**: Correção específica no motor de processamento OFX para garantir que as datas sejam lidas no horário local, evitando o erro de "atraso de um dia" causado pelo fuso horário UTC.
+- **Deduplicação Visual**: Ajuste fino no modal de importação para destacar duplicatas com maior precisão.
+
 ## [1.8.6-STABLE] - 2026-04-24
 ### Fixed
 - **Correção de Fuso Horário (Timezone)**: Resolvido o bug onde transações importadas apareciam com um dia de atraso. Agora todas as datas são forçadas para o meio-dia local, garantindo integridade entre o extrato bancário e o dashboard.
