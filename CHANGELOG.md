@@ -3,6 +3,11 @@
 
 Todas as mudanças notable neste projeto serão documentadas neste arquivo.
 
+## [1.8.6-STABLE] - 2026-04-24
+### Fixed
+- **Correção de Fuso Horário (Timezone)**: Resolvido o bug onde transações importadas apareciam com um dia de atraso. Agora todas as datas são forçadas para o meio-dia local, garantindo integridade entre o extrato bancário e o dashboard.
+- **Sincronização Nubank**: Melhoria na precisão dos cálculos de importação para bater centavo por centavo com faturas de cartões de crédito.
+
 ## [1.8.5-STABLE] - 2026-04-24
 ### Added
 - **Detecção Visual de Duplicatas**: Agora, ao importar arquivos, o sistema destaca em vermelho as transações que já existem no seu banco de dados.
