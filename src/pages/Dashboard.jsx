@@ -1863,8 +1863,7 @@ export default function Dashboard() {
       let skippedCount = 0;
 
       for (const tx of items) {
-      // 1.8.5: Agora a importação é total, confiando no que está no modal
-      for (const tx of items) {
+        // 1.8.5: Agora a importação é total, confiando no que está no modal
         await addTransaction({ ...tx, walletId: wId });
         importedCount++;
       }
