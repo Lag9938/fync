@@ -3,6 +3,12 @@
 
 Todas as mudanças notable neste projeto serão documentadas neste arquivo.
 
+## [1.8.4-STABLE] - 2026-04-24
+### Fixed
+- **Filtro Persistente**: O sistema não altera mais o seu filtro automaticamente após uma importação, respeitando se você selecionou um período customizado (ex: 06/02 a 06/03).
+- **Importação Precisa**: Ajuste na lógica de deduplicação para evitar que transações legítimas sejam ignoradas. Agora a verificação é 100% fiel à conta e ao tipo da transação.
+- **Datas de Excel**: Correção na leitura de datas em planilhas que não incluem o ano explicitamente.
+
 ## [1.8.3-STABLE] - 2026-04-23
 ### Added
 - **Smart Logo Enrichment (IA)**: O sistema agora tenta resolver automaticamente o ícone de qualquer estabelecimento desconhecido. Se um comerciante não estiver na base de dados, a IA infere o domínio do site oficial e busca o logo via Clearbit/Google Favicons.

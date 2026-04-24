@@ -73,7 +73,7 @@ import { askGemini, batchCategorizeTransactions, extractTransactionsFromPDF, ext
 import { motion, AnimatePresence } from 'framer-motion';
 import './Dashboard.css';
 
-const APP_VERSION = '1.8.3';
+const APP_VERSION = '1.8.4';
 
 const CATEGORIES = [
   { id: 'Alimentação', icon: Utensils },
@@ -1849,8 +1849,9 @@ export default function Dashboard() {
       let skippedCount = 0;
 
       for (const tx of items) {
+        // 1.8.4: Deduplicação mais inteligente
+        // Se a transação já existe no banco, marcamos como duplicata.
         const isDuplicate = transactions.some(existing => {
-          // Comparação direta de strings de data YYYY-MM-DD para evitar problemas de fuso horário
           const d1 = existing.date ? String(existing.date).split('T')[0] : '';
           const d2 = tx.date ? String(tx.date).split('T')[0] : '';
           
@@ -1871,12 +1872,13 @@ export default function Dashboard() {
       }
 
       // Muda o filtro automaticamente para o mês da transação mais recente importada
-      const firstDate = items[0].date;
-      if (firstDate) {
-        const targetMonth = firstDate.substring(0, 7); // YYYY-MM
-        setFilterMonth(targetMonth);
-        setFilterMode('month');
-      }
+      // 1.8.4: Removido o switch automático de filtro para não atrapalhar quem está usando filtro por período
+      // const firstDate = items[0].date;
+      // if (firstDate) {
+      //   const targetMonth = firstDate.substring(0, 7); // YYYY-MM
+      //   setFilterMonth(targetMonth);
+      //   setFilterMode('month');
+      // }
 
       setOfxPreview(null);
       let toastMsg = `✅ ${importedCount} transações importadas com sucesso em ${new Date(items[0].date).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}.`;
