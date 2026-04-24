@@ -73,7 +73,7 @@ import { askGemini, batchCategorizeTransactions, extractTransactionsFromPDF, ext
 import { motion, AnimatePresence } from 'framer-motion';
 import './Dashboard.css';
 
-const APP_VERSION = '1.8.5';
+const APP_VERSION = '1.8.6';
 
 const CATEGORIES = [
   { id: 'Alimentação', icon: Utensils },
@@ -1778,7 +1778,7 @@ export default function Dashboard() {
             title: tx.title,
             amount: Math.abs(parseFloat(tx.amount)),
             type: tx.type === 'income' ? 'income' : 'expense',
-            date: tx.date || new Date().toISOString().split('T')[0],
+            date: tx.date ? (tx.date.includes('T') ? tx.date : `${tx.date}T12:00:00`) : new Date().toISOString().split('T')[0] + 'T12:00:00',
             category: 'Outros', // AI will later categorize or we leave as default
             walletId: wallets[0]?.id || null,
             status: 'paid'
@@ -1826,9 +1826,9 @@ export default function Dashboard() {
           } else if (parts.length === 2) {
             // Tenta usar o ano do filtro atual ou o ano vigente
             const year = filterMonth ? filterMonth.split('-')[0] : new Date().getFullYear();
-            dateStr = `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            dateStr = `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}T12:00:00`;
           } else {
-            dateStr = new Date().toISOString().split('T')[0];
+            dateStr = new Date().toISOString().split('T')[0] + 'T12:00:00';
           }
         }
         const amount = Math.abs(parseFloat(String(row[2]).replace(',', '.')) || 0);
