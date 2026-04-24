@@ -7,7 +7,7 @@ export const parseOFX = (ofxString) => {
     const year  = s.substring(0, 4);
     const month = s.substring(4, 6);
     const day   = s.substring(6, 8);
-    return `${year}-${month}-${day}T12:00:00.000Z`;
+    return `${year}-${month}-${day}T12:00:00`;
   };
 
   const getTag = (block, tag) => {

@@ -73,7 +73,7 @@ import { askGemini, batchCategorizeTransactions, extractTransactionsFromPDF, ext
 import { motion, AnimatePresence } from 'framer-motion';
 import './Dashboard.css';
 
-const APP_VERSION = '1.8.6';
+const APP_VERSION = '1.8.7';
 
 const CATEGORIES = [
   { id: 'Alimentação', icon: Utensils },
