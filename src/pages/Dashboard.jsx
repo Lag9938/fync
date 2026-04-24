@@ -73,7 +73,7 @@ import { askGemini, batchCategorizeTransactions, extractTransactionsFromPDF, ext
 import { motion, AnimatePresence } from 'framer-motion';
 import './Dashboard.css';
 
-const APP_VERSION = '1.8.4';
+const APP_VERSION = '1.8.5';
 
 const CATEGORIES = [
   { id: 'Alimentação', icon: Utensils },
@@ -581,6 +581,20 @@ export default function Dashboard() {
   // Filters for Pie Chart
   const savedExcluded = JSON.parse(localStorage.getItem('fync_excluded_categories') || '[]');
   const [excludedCategories, setExcludedCategories] = useState(savedExcluded);
+  
+  // Duplicate check helper for preview
+  const checkIsDuplicate = (item, targetWalletId) => {
+    if (!targetWalletId) return false;
+    return (transactions || []).some(existing => {
+      const d1 = existing.date ? String(existing.date).split('T')[0] : '';
+      const d2 = item.date ? String(item.date).split('T')[0] : '';
+      return String(existing.walletId) === String(targetWalletId) &&
+        existing.type === item.type &&
+        existing.title.trim().toLowerCase() === item.title.trim().toLowerCase() &&
+        Math.abs(parseFloat(existing.amount) - parseFloat(item.amount)) < 0.01 &&
+        d1 === d2;
+    });
+  };
 
   // Persist to localStorage
   useEffect(() => {
@@ -1849,24 +1863,8 @@ export default function Dashboard() {
       let skippedCount = 0;
 
       for (const tx of items) {
-        // 1.8.4: Deduplicação mais inteligente
-        // Se a transação já existe no banco, marcamos como duplicata.
-        const isDuplicate = transactions.some(existing => {
-          const d1 = existing.date ? String(existing.date).split('T')[0] : '';
-          const d2 = tx.date ? String(tx.date).split('T')[0] : '';
-          
-          return existing.walletId === wId &&
-            existing.type === tx.type &&
-            existing.title.trim().toLowerCase() === tx.title.trim().toLowerCase() &&
-            Math.abs(parseFloat(existing.amount) - parseFloat(tx.amount)) < 0.01 &&
-            d1 === d2;
-        });
-
-        if (isDuplicate) {
-          skippedCount++;
-          continue;
-        }
-
+      // 1.8.5: Agora a importação é total, confiando no que está no modal
+      for (const tx of items) {
         await addTransaction({ ...tx, walletId: wId });
         importedCount++;
       }
@@ -5576,9 +5574,19 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {ofxPreview.items.map((item, idx) => (
-                      <tr key={idx} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                        <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>{new Date(item.date).toLocaleDateString('pt-BR')}</td>
+                    {ofxPreview.items.map((item, idx) => {
+                      const isDuplicate = checkIsDuplicate(item, ofxPreview.walletId);
+                      return (
+                        <tr key={idx} style={{ 
+                          borderTop: '1px solid rgba(255,255,255,0.05)',
+                          background: isDuplicate ? 'rgba(239, 68, 68, 0.05)' : 'transparent'
+                        }}>
+                          <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              {isDuplicate && <HelpCircle size={14} style={{ color: '#f87171' }} title="Esta transação já existe nesta conta." />}
+                              {new Date(item.date).toLocaleDateString('pt-BR')}
+                            </div>
+                          </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
                           <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' }} title={item.title}>
                             {item.title}
@@ -5616,11 +5624,27 @@ export default function Dashboard() {
                             <ChevronDown size={14} style={{ position: 'absolute', right: item.isAiSuggested ? '22px' : '8px', pointerEvents: 'none', opacity: 0.5 }} />
                           </div>
                         </td>
-                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: item.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)', fontWeight: 'bold' }}>
-                          {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount)}
+                        <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                            <div style={{ color: item.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)', fontWeight: 'bold' }}>
+                              {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount)}
+                            </div>
+                            <button 
+                              onClick={() => {
+                                const newItems = [...ofxPreview.items];
+                                newItems.splice(idx, 1);
+                                setOfxPreview({ ...ofxPreview, items: newItems });
+                              }}
+                              style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+                              title="Remover da lista"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
-                    ))}
+                    );
+                  })}
                   </tbody>
                 </table>
               </div>

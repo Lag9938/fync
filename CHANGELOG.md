@@ -3,6 +3,12 @@
 
 Todas as mudanças notable neste projeto serão documentadas neste arquivo.
 
+## [1.8.5-STABLE] - 2026-04-24
+### Added
+- **Detecção Visual de Duplicatas**: Agora, ao importar arquivos, o sistema destaca em vermelho as transações que já existem no seu banco de dados.
+- **Controle Manual de Importação**: O sistema não ignora mais nada automaticamente. Você decide o que importar, podendo remover itens da lista antes de confirmar.
+- **Botão de Remoção Individual**: Adicionado um botão "X" para cada linha no modal de revisão, permitindo limpar a lista antes de salvar.
+
 ## [1.8.4-STABLE] - 2026-04-24
 ### Fixed
 - **Filtro Persistente**: O sistema não altera mais o seu filtro automaticamente após uma importação, respeitando se você selecionou um período customizado (ex: 06/02 a 06/03).
